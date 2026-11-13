@@ -1,0 +1,1650 @@
+import { ListView, ScrollView } from "std-widgets.slint";
+import { T } from "theme.slint";
+import { Icons, Icon, AppLogo } from "icons.slint";
+import {
+    TreeRow, TabItem, QuickItem, MenuItemData, HostRow, Crumb, Toast,
+    ToolButton, ActivityItem, TreeRowView, EditorTab, StatusItem, MenuTitle, WinButton, BlueButton, KeyCap
+} from "widgets.slint";
+
+export { TreeRow, TabItem, QuickItem, MenuItemData, HostRow, Crumb, Toast }
+
+export component App inherits Window {
+    // ---------- window ----------
+    in property <string> window-title: "rcode";
+    title: root.window-title;
+    no-frame: true;
+    resize-border-width: 5px;
+    preferred-width: 1280px;
+    preferred-height: 820px;
+    min-width: 640px;
+    min-height: 400px;
+    background: T.bg-side;
+    default-font-family: T.ui-font;
+    default-font-size: 13px;
+
+    // ---------- title bar ----------
+    in property <string> command-center-text: "rcode";
+    in property <[string]> menu-titles: ["File", "Edit", "Selection", "View", "Go", "Run", "Terminal", "Help"];
+    in property <int> menu-index: -1;
+    callback menu-open(int, length);
+    callback win-minimize();
+    callback win-toggle-maximize();
+    callback win-close();
+    callback command-center-clicked();
+
+    // ---------- activity bar / sidebar ----------
+    in property <bool> sidebar-visible: true;
+    in property <string> active-view: "explorer";
+    in-out property <length> sidebar-width: 260px;
+    callback activity(string);
+
+    // explorer
+    in property <string> workspace-name;
+    in property <[TreeRow]> tree-rows;
+    callback tree-clicked(int);
+    callback tree-context(int, length, length);
+    callback tree-key(string, bool, bool, bool) -> bool;
+    callback explorer-action(string);
+    out property <bool> tree-focused: tree-fs.has-focus;
+
+    // remote explorer
+    in property <[HostRow]> hosts;
+    callback host-clicked(int);
+    callback remote-action(string);
+
+    // ---------- editor ----------
+    in property <[TabItem]> tabs;
+    callback tab-clicked(int);
+    callback tab-close(int);
+    in property <[Crumb]> crumbs;
+    in property <bool> editor-visible: false;
+    in property <string> editor-message;
+    in property <bool> editor-read-only: false;
+    in-out property <string> editor-text <=> ti.text;
+    out property <int> editor-cursor: ti.cursor-position-byte-offset;
+    out property <int> editor-anchor: ti.anchor-position-byte-offset;
+    in-out property <length> editor-scroll-x <=> sv.content-x;
+    in-out property <length> editor-scroll-y <=> sv.content-y;
+    out property <length> editor-visible-height: sv.visible-height;
+    in-out property <length> editor-font-size: 14px;
+    in property <int> line-count: 1;
+    in property <int> line-digits: 1;
+    in property <int> cursor-line: 0;
+    out property <length> line-h: ti.preferred-height / max(1, root.line-count);
+    out property <bool> editor-focused: ti.has-focus;
+    callback editor-edited(string);
+    callback editor-key(string, bool, bool, bool) -> bool;
+    callback editor-cursor-moved(int, int);
+    callback gutter-clicked(int, bool);
+    callback command(string);
+
+    // find widget
+    in property <bool> find-open;
+    in property <bool> replace-open;
+    in-out property <string> find-text;
+    in-out property <string> replace-text;
+    in property <string> find-info;
+    in property <bool> find-case;
+    in property <bool> find-word;
+    callback find-edited(string);
+    callback find-next(bool);
+    callback replace-one();
+    callback replace-all();
+    callback find-close();
+    callback find-toggle-replace();
+    callback find-toggle(string);
+
+    // ---------- status bar ----------
+    in property <string> status-remote;
+    in property <bool> status-remote-busy;
+    in property <string> status-message;
+    in property <string> status-lncol: "Ln 1, Col 1";
+    in property <string> status-indent: "Spaces: 4";
+    in property <string> status-encoding: "UTF-8";
+    in property <string> status-eol: "LF";
+    in property <string> status-lang: "Plain Text";
+    callback status-clicked(string);
+
+    // ---------- quick input (Ctrl+P / Ctrl+Shift+P / prompts) ----------
+    in property <bool> quick-open;
+    in-out property <string> quick-text;
+    in property <string> quick-placeholder;
+    in property <string> quick-title;
+    in property <bool> quick-password;
+    in property <[QuickItem]> quick-items;
+    in-out property <int> quick-index;
+    in property <int> quick-cursor-pos;
+    in property <int> quick-reset-cursor;
+    callback quick-edited(string);
+    callback quick-accept(int);
+    callback quick-cancel();
+
+    // ---------- popup menu (menubar dropdowns / context menus) ----------
+    in property <bool> popup-open;
+    in property <bool> popup-from-menubar;
+    in property <length> popup-x;
+    in property <length> popup-y;
+    in property <[MenuItemData]> popup-items;
+    callback popup-activated(int);
+    callback popup-dismiss();
+
+    // ---------- modal dialog ----------
+    in property <bool> dialog-open;
+    in property <string> dialog-message;
+    in property <string> dialog-detail;
+    in property <[string]> dialog-buttons;
+    callback dialog-result(int);
+
+    // ---------- notifications ----------
+    in property <[Toast]> toasts;
+    callback toast-close(int);
+
+    // ---------- global keys ----------
+    callback global-key(string, bool, bool, bool) -> bool;
+
+    // ---------- functions callable from Rust ----------
+    public function set-selection(anchor: int, focus: int) {
+        ti.set-selection-offsets(anchor, focus);
+    }
+    public function focus-editor() {
+        ti.focus();
+    }
+    public function editor-copy() {
+        ti.copy();
+    }
+    public function editor-cut() {
+        ti.cut();
+    }
+    public function editor-paste() {
+        ti.paste();
+    }
+    public function focus-tree() {
+        tree-fs.focus();
+    }
+    public function focus-root() {
+        root-fs.focus();
+    }
+    public function focus-find() {
+        find-input.focus();
+        find-input.select-all();
+    }
+    public function focus-replace() {
+        replace-input.focus();
+        replace-input.select-all();
+    }
+
+    private property <length> ch: root.editor-font-size * 0.55;
+    private property <length> gutter-w: max(5, root.line-digits) * root.ch + 34px;
+
+    root-fs := FocusScope {
+        focus-on-click: false;
+        capture-key-pressed(e) => {
+            if root.global-key(e.text, e.modifiers.control, e.modifiers.shift, e.modifiers.alt) {
+                return EventResult.accept;
+            }
+            return EventResult.reject;
+        }
+
+        VerticalLayout {
+            spacing: 0;
+
+            // ================= TITLE BAR =================
+            Rectangle {
+                height: 35px;
+                background: T.bg-side;
+                Rectangle {
+                    y: parent.height - 1px;
+                    height: 1px;
+                    background: T.border;
+                }
+
+                WindowMoveArea {
+                    TouchArea {
+                        double-clicked => {
+                            root.win-toggle-maximize();
+                        }
+                        clicked => {
+                            root.popup-dismiss();
+                        }
+                    }
+
+                    HorizontalLayout {
+                        padding-left: 10px;
+                        spacing: 0;
+                        AppLogo {
+                            y: (35px - 16px) / 2;
+                        }
+
+                        Rectangle {
+                            width: 6px;
+                        }
+
+                        menubar := HorizontalLayout {
+                            alignment: start;
+                            padding-top: 4px;
+                            padding-bottom: 5px;
+                            for title[i] in root.menu-titles: MenuTitle {
+                                label: title;
+                                open: root.menu-index == i;
+                                pressed => {
+                                    if root.menu-index == i {
+                                        root.popup-dismiss();
+                                    } else {
+                                        root.menu-open(i, self.absolute-position.x);
+                                    }
+                                }
+                                hovered => {
+                                    if root.menu-index >= 0 && root.menu-index != i {
+                                        root.menu-open(i, self.absolute-position.x);
+                                    }
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            horizontal-stretch: 1;
+                        }
+
+                        Rectangle {
+                            width: 46px * 3;
+                        }
+                    }
+
+                    // command center (centered in window)
+                    cc := Rectangle {
+                        width: min(600px, root.width * 0.38);
+                        height: 24px;
+                        x: (root.width - self.width) / 2;
+                        y: (35px - self.height) / 2;
+                        border-radius: 6px;
+                        background: cc-ta.has-hover ? #ffffff17 : #ffffff0d;
+                        border-width: 1px;
+                        border-color: #ffffff1a;
+                        HorizontalLayout {
+                            alignment: center;
+                            spacing: 6px;
+                            Icon {
+                                y: (24px - 14px) / 2;
+                                d: Icons.search;
+                                size: 14px;
+                                color: T.fg;
+                            }
+
+                            Text {
+                                text: root.command-center-text;
+                                color: T.fg;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                        }
+
+                        cc-ta := TouchArea {
+                            clicked => {
+                                root.command-center-clicked();
+                            }
+                        }
+                    }
+                }
+
+                // window controls
+                HorizontalLayout {
+                    x: parent.width - 46px * 3;
+                    width: 46px * 3;
+                    height: 34px;
+                    WinButton {
+                        icon: Icons.win-min;
+                        clicked => {
+                            root.win-minimize();
+                        }
+                    }
+
+                    WinButton {
+                        icon: root.maximized ? Icons.win-restore : Icons.win-max;
+                        clicked => {
+                            root.win-toggle-maximize();
+                        }
+                    }
+
+                    WinButton {
+                        icon: Icons.close;
+                        danger: true;
+                        clicked => {
+                            root.win-close();
+                        }
+                    }
+                }
+            }
+
+            // ================= MAIN =================
+            HorizontalLayout {
+                spacing: 0;
+                vertical-stretch: 1;
+
+                // ---------- activity bar ----------
+                Rectangle {
+                    width: 48px;
+                    background: T.bg-side;
+                    Rectangle {
+                        x: parent.width - 1px;
+                        width: 1px;
+                        background: T.border;
+                    }
+
+                    VerticalLayout {
+                        alignment: start;
+                        ActivityItem {
+                            icon: Icons.files;
+                            active: root.sidebar-visible && root.active-view == "explorer";
+                            clicked => {
+                                root.activity("explorer");
+                            }
+                        }
+
+                        ActivityItem {
+                            icon: Icons.search;
+                            active: root.sidebar-visible && root.active-view == "search";
+                            clicked => {
+                                root.activity("search");
+                            }
+                        }
+
+                        ActivityItem {
+                            icon: Icons.scm;
+                            active: root.sidebar-visible && root.active-view == "scm";
+                            clicked => {
+                                root.activity("scm");
+                            }
+                        }
+
+                        ActivityItem {
+                            icon: Icons.run;
+                            active: root.sidebar-visible && root.active-view == "run";
+                            clicked => {
+                                root.activity("run");
+                            }
+                        }
+
+                        ActivityItem {
+                            icon: Icons.extensions;
+                            active: root.sidebar-visible && root.active-view == "extensions";
+                            clicked => {
+                                root.activity("extensions");
+                            }
+                        }
+
+                        ActivityItem {
+                            icon: Icons.remote;
+                            active: root.sidebar-visible && root.active-view == "remote";
+                            clicked => {
+                                root.activity("remote");
+                            }
+                        }
+                    }
+
+                    VerticalLayout {
+                        alignment: end;
+                        ActivityItem {
+                            icon: Icons.account;
+                            clicked => {
+                                root.activity("account");
+                            }
+                        }
+
+                        ActivityItem {
+                            icon: Icons.gear;
+                            clicked => {
+                                root.activity("manage");
+                            }
+                        }
+                    }
+                }
+
+                // ---------- side bar ----------
+                if root.sidebar-visible: Rectangle {
+                    width: root.sidebar-width;
+                    background: T.bg-side;
+                    side-ta := TouchArea { }
+                    Rectangle {
+                        x: parent.width - 1px;
+                        width: 1px;
+                        background: T.border;
+                    }
+
+                    VerticalLayout {
+                        // view title
+                        Rectangle {
+                            height: 35px;
+                            HorizontalLayout {
+                                padding-left: 20px;
+                                padding-right: 8px;
+                                Text {
+                                    text: root.active-view == "explorer" ? "EXPLORER" : root.active-view == "search" ? "SEARCH" : root.active-view == "scm" ? "SOURCE CONTROL" : root.active-view == "run" ? "RUN AND DEBUG" : root.active-view == "extensions" ? "EXTENSIONS" : "REMOTE EXPLORER";
+                                    font-size: 11px;
+                                    color: T.fg;
+                                    vertical-alignment: center;
+                                    horizontal-stretch: 1;
+                                }
+
+                                Text {
+                                    text: "···";
+                                    color: T.fg;
+                                    font-size: 14px;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+
+                        // ---- explorer ----
+                        if root.active-view == "explorer": VerticalLayout {
+                            vertical-stretch: 1;
+                            // section header
+                            sec := Rectangle {
+                                height: 22px;
+                                sec-ta := TouchArea { }
+
+                                HorizontalLayout {
+                                    padding-left: 2px;
+                                    padding-right: 8px;
+                                    spacing: 2px;
+                                    Icon {
+                                        y: 3px;
+                                        d: Icons.chevron-down;
+                                        size: 16px;
+                                        color: T.fg;
+                                    }
+
+                                    Text {
+                                        text: root.workspace-name == "" ? "NO FOLDER OPENED" : root.workspace-name;
+                                        font-size: 11px;
+                                        font-weight: 700;
+                                        color: T.fg;
+                                        vertical-alignment: center;
+                                        horizontal-stretch: 1;
+                                        overflow: elide;
+                                    }
+
+                                    if root.workspace-name != "" && (side-ta.has-hover || root.tree-focused): HorizontalLayout {
+                                        spacing: 0;
+                                        ToolButton {
+                                            icon: Icons.new-file;
+                                            clicked => {
+                                                root.explorer-action("new-file");
+                                            }
+                                        }
+
+                                        ToolButton {
+                                            icon: Icons.new-folder;
+                                            clicked => {
+                                                root.explorer-action("new-folder");
+                                            }
+                                        }
+
+                                        ToolButton {
+                                            icon: Icons.refresh;
+                                            clicked => {
+                                                root.explorer-action("refresh");
+                                            }
+                                        }
+
+                                        ToolButton {
+                                            icon: Icons.collapse;
+                                            clicked => {
+                                                root.explorer-action("collapse");
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if root.workspace-name == "": VerticalLayout {
+                                padding-left: 20px;
+                                padding-right: 20px;
+                                padding-top: 10px;
+                                spacing: 14px;
+                                alignment: start;
+                                Text {
+                                    text: "You have not yet opened a folder.";
+                                    color: T.fg;
+                                    wrap: word-wrap;
+                                }
+
+                                BlueButton {
+                                    text: "Open Folder";
+                                    clicked => {
+                                        root.explorer-action("open-folder");
+                                    }
+                                }
+
+                                Text {
+                                    text: "Connect to a remote machine over SSH and edit its files in place.";
+                                    color: T.fg;
+                                    wrap: word-wrap;
+                                }
+
+                                BlueButton {
+                                    text: "Connect to Host...";
+                                    clicked => {
+                                        root.explorer-action("open-remote");
+                                    }
+                                }
+                            }
+
+                            if root.workspace-name != "": tree-wrap := Rectangle {
+                                vertical-stretch: 1;
+                                tree-ta := TouchArea {
+                                    pointer-event(e) => {
+                                        if e.kind == PointerEventKind.down {
+                                            tree-fs.focus();
+                                            if e.button == PointerEventButton.right {
+                                                root.tree-context(-1, self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                ListView {
+                                    for row[i] in root.tree-rows: TreeRowView {
+                                        data: row;
+                                        focused: root.tree-focused;
+                                        clicked => {
+                                            tree-fs.focus();
+                                            root.tree-clicked(i);
+                                        }
+                                        context(x, y) => {
+                                            tree-fs.focus();
+                                            root.tree-context(i, x, y);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // ---- remote explorer ----
+                        if root.active-view == "remote": VerticalLayout {
+                            vertical-stretch: 1;
+                            Rectangle {
+                                height: 22px;
+                                rsec-ta := TouchArea { }
+
+                                HorizontalLayout {
+                                    padding-left: 2px;
+                                    padding-right: 8px;
+                                    spacing: 2px;
+                                    Icon {
+                                        y: 3px;
+                                        d: Icons.chevron-down;
+                                        size: 16px;
+                                        color: T.fg;
+                                    }
+
+                                    Text {
+                                        text: "SSH";
+                                        font-size: 11px;
+                                        font-weight: 700;
+                                        color: T.fg;
+                                        vertical-alignment: center;
+                                        horizontal-stretch: 1;
+                                    }
+
+                                    ToolButton {
+                                        icon: Icons.gear;
+                                        clicked => {
+                                            root.remote-action("config");
+                                        }
+                                    }
+
+                                    ToolButton {
+                                        icon: Icons.refresh;
+                                        clicked => {
+                                            root.remote-action("refresh");
+                                        }
+                                    }
+                                }
+                            }
+
+                            if root.hosts.length == 0: Text {
+                                text: "No hosts found in ~/.ssh/config.";
+                                color: T.fg-dim;
+                                x: 20px;
+                                wrap: word-wrap;
+                            }
+                            ListView {
+                                for h[i] in root.hosts: Rectangle {
+                                    height: 22px;
+                                    background: hta.has-hover ? T.hover : transparent;
+                                    HorizontalLayout {
+                                        padding-left: 22px;
+                                        padding-right: 8px;
+                                        spacing: 6px;
+                                        Icon {
+                                            y: 3px;
+                                            d: Icons.remote;
+                                            size: 16px;
+                                            color: h.connected ? #73c991 : T.fg;
+                                        }
+
+                                        Text {
+                                            text: h.name;
+                                            color: T.fg;
+                                            vertical-alignment: center;
+                                        }
+
+                                        Text {
+                                            text: h.detail;
+                                            color: T.fg-muted;
+                                            font-size: 12px;
+                                            vertical-alignment: center;
+                                            overflow: elide;
+                                            horizontal-stretch: 1;
+                                        }
+
+                                        if hta.has-hover: Icon {
+                                            y: 3px;
+                                            d: Icons.arrow-right;
+                                            size: 16px;
+                                            color: T.fg;
+                                        }
+                                    }
+
+                                    hta := TouchArea {
+                                        clicked => {
+                                            root.host-clicked(i);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // ---- not yet implemented views ----
+                        if root.active-view != "explorer" && root.active-view != "remote": VerticalLayout {
+                            padding: 20px;
+                            alignment: start;
+                            Text {
+                                text: "This view is not available yet.";
+                                color: T.fg-dim;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+                }
+
+                // ---------- editor group ----------
+                Rectangle {
+                    horizontal-stretch: 1;
+                    background: T.bg-editor;
+
+                    VerticalLayout {
+                        spacing: 0;
+                        // tabs
+                        if root.tabs.length > 0: Rectangle {
+                            height: 35px;
+                            background: T.bg-side;
+                            Rectangle {
+                                y: parent.height - 1px;
+                                height: 1px;
+                                background: T.border;
+                            }
+
+                            Flickable {
+                                content-width: tabs-row.preferred-width;
+                                tabs-row := HorizontalLayout {
+                                    alignment: start;
+                                    spacing: 0;
+                                    for t[i] in root.tabs: EditorTab {
+                                        tab: t;
+                                        clicked => {
+                                            root.tab-clicked(i);
+                                        }
+                                        close => {
+                                            root.tab-close(i);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // breadcrumbs
+                        if root.tabs.length > 0: Rectangle {
+                            height: 22px;
+                            HorizontalLayout {
+                                padding-left: 14px;
+                                spacing: 2px;
+                                alignment: start;
+                                for c[i] in root.crumbs: HorizontalLayout {
+                                    spacing: 4px;
+                                    if i > 0: Icon {
+                                        y: 4px;
+                                        d: Icons.chevron-right;
+                                        size: 14px;
+                                        color: T.fg-muted;
+                                    }
+                                    if c.glyph != "": Text {
+                                        text: c.glyph;
+                                        color: c.glyph-color;
+                                        font-size: 10px;
+                                        font-weight: 700;
+                                        vertical-alignment: center;
+                                    }
+                                    Text {
+                                        text: c.label;
+                                        color: T.fg-dim;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+                        }
+
+                        // editor body
+                        Rectangle {
+                            vertical-stretch: 1;
+                            clip: true;
+
+                            // welcome / watermark
+                            if root.tabs.length == 0: VerticalLayout {
+                                alignment: center;
+                                spacing: 10px;
+                                Rectangle {
+                                    height: 150px;
+                                    Path {
+                                        width: 150px;
+                                        height: 150px;
+                                        viewbox-width: 24;
+                                        viewbox-height: 24;
+                                        commands: "M17 2 L22 4.5 V19.5 L17 22 L7 13 L3 16 L1.5 15 V9 L3 8 L7 11 Z M17 7 L11.5 12 L17 17 Z";
+                                        fill: #ffffff0a;
+                                        stroke: transparent;
+                                    }
+                                }
+
+                                Rectangle {
+                                    height: 20px;
+                                }
+
+                                for row in [
+                                    { label: "Show All Commands", keys: ["Ctrl", "Shift", "P"] },
+                                    { label: "Go to File", keys: ["Ctrl", "P"] },
+                                    { label: "Open Folder", keys: ["Ctrl", "K", "Ctrl", "O"] },
+                                    { label: "Connect to Host", keys: ["Ctrl", "Alt", "O"] },
+                                    { label: "Toggle Primary Side Bar", keys: ["Ctrl", "B"] },
+                                ]: HorizontalLayout {
+                                    alignment: center;
+                                    spacing: 12px;
+                                    Text {
+                                        width: 180px;
+                                        text: row.label;
+                                        color: T.fg-muted;
+                                        horizontal-alignment: right;
+                                        vertical-alignment: center;
+                                    }
+
+                                    HorizontalLayout {
+                                        width: 180px;
+                                        alignment: start;
+                                        spacing: 3px;
+                                        for k[j] in row.keys: HorizontalLayout {
+                                            spacing: 3px;
+                                            if j > 0: Text {
+                                                text: "+";
+                                                color: T.fg-muted;
+                                                vertical-alignment: center;
+                                            }
+                                            KeyCap {
+                                                text: k;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if root.tabs.length > 0 && root.editor-message != "": Text {
+                                x: 20px;
+                                y: 20px;
+                                width: parent.width - 40px;
+                                text: root.editor-message;
+                                color: T.fg;
+                                wrap: word-wrap;
+                            }
+
+                            ContextMenuArea {
+                                visible: root.editor-visible;
+                                enabled: root.editor-visible;
+                                Menu {
+                                    MenuItem {
+                                        title: "Cut";
+                                        activated => {
+                                            root.command("editor.cut");
+                                        }
+                                    }
+
+                                    MenuItem {
+                                        title: "Copy";
+                                        activated => {
+                                            root.command("editor.copy");
+                                        }
+                                    }
+
+                                    MenuItem {
+                                        title: "Paste";
+                                        activated => {
+                                            root.command("editor.paste");
+                                        }
+                                    }
+
+                                    MenuSeparator { }
+
+                                    MenuItem {
+                                        title: "Command Palette...";
+                                        activated => {
+                                            root.command("palette");
+                                        }
+                                    }
+                                }
+
+                                sv := ScrollView {
+                                    visible: root.editor-visible;
+                                    content-width: max(self.visible-width, root.gutter-w + ti.preferred-width + 60px);
+                                    content-height: max(self.visible-height, ti.preferred-height + self.visible-height - root.line-h);
+
+                                    // current line highlight
+                                    Rectangle {
+                                        x: -sv.content-x + root.gutter-w;
+                                        y: root.cursor-line * root.line-h;
+                                        width: sv.visible-width - root.gutter-w;
+                                        height: root.line-h;
+                                        border-width: 2px;
+                                        border-color: T.line-highlight;
+                                        visible: ti.cursor-position-byte-offset == ti.anchor-position-byte-offset;
+                                    }
+
+                                    ti := TextInput {
+                                        x: root.gutter-w;
+                                        y: 0;
+                                        width: max(sv.visible-width - root.gutter-w, self.preferred-width + 40px);
+                                        height: max(sv.visible-height, self.preferred-height);
+                                        single-line: false;
+                                        wrap: no-wrap;
+                                        read-only: root.editor-read-only;
+                                        enabled: root.editor-visible;
+                                        font-family: T.mono-font;
+                                        font-size: root.editor-font-size;
+                                        line-height-factor: 1.17;
+                                        color: #cccccc;
+                                        selection-background-color: T.selection;
+                                        selection-foreground-color: #cccccc;
+                                        text-cursor-width: 2px;
+                                        page-height: sv.visible-height;
+                                        edited => {
+                                            root.editor-edited(self.text);
+                                        }
+                                        key-pressed(e) => {
+                                            if root.editor-key(e.text, e.modifiers.control, e.modifiers.shift, e.modifiers.alt) {
+                                                return EventResult.accept;
+                                            }
+                                            return EventResult.reject;
+                                        }
+                                        cursor-position-changed(p) => {
+                                            // keep the cursor visible (TextInput does not scroll by itself)
+                                            if p.y + sv.content-y < 0 {
+                                                sv.content-y = -p.y;
+                                            } else if p.y + root.line-h + sv.content-y > sv.visible-height {
+                                                sv.content-y = min(0px, sv.visible-height - p.y - root.line-h);
+                                            }
+                                            if p.x + sv.content-x < 0 {
+                                                sv.content-x = min(0px, -p.x + 20px);
+                                            } else if p.x + sv.content-x > sv.visible-width - root.gutter-w - 30px {
+                                                sv.content-x = min(0px, sv.visible-width - root.gutter-w - 30px - p.x);
+                                            }
+                                            root.editor-cursor-moved(self.cursor-position-byte-offset, self.anchor-position-byte-offset);
+                                        }
+                                    }
+
+                                    // gutter (line numbers), fixed horizontally, only visible lines are created
+                                    Rectangle {
+                                        x: -sv.content-x;
+                                        y: -sv.content-y;
+                                        width: root.gutter-w;
+                                        height: sv.visible-height;
+                                        background: T.bg-editor;
+                                        clip: true;
+                                        property <int> first: max(0, floor(-sv.content-y / root.line-h));
+                                        property <int> rows: ceil(sv.visible-height / root.line-h) + 1;
+                                        for i in self.rows: Text {
+                                            property <int> ln: parent.first + i;
+                                            x: 0;
+                                            y: self.ln * root.line-h + sv.content-y;
+                                            width: root.gutter-w - 26px;
+                                            height: root.line-h;
+                                            visible: self.ln < root.line-count;
+                                            text: self.ln + 1;
+                                            font-family: T.mono-font;
+                                            font-size: root.editor-font-size;
+                                            color: self.ln == root.cursor-line ? T.line-num-active : T.line-num;
+                                            horizontal-alignment: right;
+                                            vertical-alignment: center;
+                                        }
+                                        gta := TouchArea {
+                                            pointer-event(e) => {
+                                                if e.kind == PointerEventKind.down && e.button == PointerEventButton.left {
+                                                    root.gutter-clicked(floor((self.mouse-y - sv.content-y) / root.line-h), e.modifiers.shift);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // ---------- find / replace widget ----------
+                            Rectangle {
+                                visible: root.find-open && root.editor-visible;
+                                x: parent.width - self.width - 28px;
+                                y: 0;
+                                width: 440px;
+                                height: root.replace-open ? 66px : 35px;
+                                background: T.widget-bg;
+                                border-radius: 0px;
+                                drop-shadow-blur: 8px;
+                                drop-shadow-color: T.shadow;
+                                drop-shadow-offset-y: 2px;
+                                Rectangle {
+                                    x: 0;
+                                    width: 3px;
+                                    background: #454545;
+                                }
+
+                                ToolButton {
+                                    x: 6px;
+                                    y: 6px;
+                                    width: 16px;
+                                    height: root.replace-open ? 54px : 22px;
+                                    icon: root.replace-open ? Icons.chevron-down : Icons.chevron-right;
+                                    clicked => {
+                                        root.find-toggle-replace();
+                                    }
+                                }
+
+                                // find row
+                                Rectangle {
+                                    x: 26px;
+                                    y: 5px;
+                                    width: 250px;
+                                    height: 24px;
+                                    background: T.input-bg;
+                                    border-width: 1px;
+                                    border-color: find-input.has-focus ? T.focus-border : T.input-border;
+                                    border-radius: 2px;
+                                    find-input := TextInput {
+                                        x: 6px;
+                                        width: parent.width - 60px;
+                                        height: parent.height;
+                                        vertical-alignment: center;
+                                        single-line: true;
+                                        text <=> root.find-text;
+                                        color: T.fg;
+                                        selection-background-color: T.selection;
+                                        edited => {
+                                            root.find-edited(self.text);
+                                        }
+                                        key-pressed(e) => {
+                                            if e.text == Key.Return {
+                                                root.find-next(e.modifiers.shift);
+                                                return EventResult.accept;
+                                            }
+                                            if e.text == Key.Escape {
+                                                root.find-close();
+                                                return EventResult.accept;
+                                            }
+                                            return EventResult.reject;
+                                        }
+                                    }
+
+                                    if root.find-text == "": Text {
+                                        x: 6px;
+                                        text: "Find";
+                                        color: T.fg-muted;
+                                        vertical-alignment: center;
+                                    }
+                                    HorizontalLayout {
+                                        x: parent.width - 52px;
+                                        width: 50px;
+                                        y: 2px;
+                                        height: 20px;
+                                        spacing: 2px;
+                                        ToolButton {
+                                            width: 20px;
+                                            height: 20px;
+                                            icon: "M3 17 L7 7 L11 17 M4.5 13.5 H9.5 M13 12 a3 3 0 1 0 6 0 a3 3 0 1 0 -6 0 Z M19 9 V17";
+                                            toggled: root.find-case;
+                                            clicked => {
+                                                root.find-toggle("case");
+                                            }
+                                        }
+
+                                        ToolButton {
+                                            width: 20px;
+                                            height: 20px;
+                                            icon: "M3 18 H21 M3 15 V18 M21 15 V18 M5 12 a2.5 2.5 0 1 0 5 0 a2.5 2.5 0 1 0 -5 0 Z M13 7 V14.5 M13 12 a2.5 2.5 0 1 0 5 0 a2.5 2.5 0 1 0 -5 0 Z";
+                                            toggled: root.find-word;
+                                            clicked => {
+                                                root.find-toggle("word");
+                                            }
+                                        }
+                                    }
+                                }
+
+                                HorizontalLayout {
+                                    x: 282px;
+                                    y: 6px;
+                                    height: 22px;
+                                    spacing: 2px;
+                                    Text {
+                                        width: 70px;
+                                        text: root.find-info;
+                                        color: root.find-info == "No results" ? T.error : T.fg;
+                                        font-size: 12px;
+                                        vertical-alignment: center;
+                                    }
+
+                                    ToolButton {
+                                        icon: Icons.arrow-up;
+                                        clicked => {
+                                            root.find-next(true);
+                                        }
+                                    }
+
+                                    ToolButton {
+                                        icon: Icons.arrow-down;
+                                        clicked => {
+                                            root.find-next(false);
+                                        }
+                                    }
+
+                                    ToolButton {
+                                        icon: Icons.close;
+                                        clicked => {
+                                            root.find-close();
+                                        }
+                                    }
+                                }
+
+                                // replace row
+                                Rectangle {
+                                    visible: root.replace-open;
+                                    x: 26px;
+                                    y: 36px;
+                                    width: 250px;
+                                    height: 24px;
+                                    background: T.input-bg;
+                                    border-width: 1px;
+                                    border-color: replace-input.has-focus ? T.focus-border : T.input-border;
+                                    border-radius: 2px;
+                                    replace-input := TextInput {
+                                        x: 6px;
+                                        width: parent.width - 12px;
+                                        height: parent.height;
+                                        vertical-alignment: center;
+                                        single-line: true;
+                                        text <=> root.replace-text;
+                                        color: T.fg;
+                                        selection-background-color: T.selection;
+                                        key-pressed(e) => {
+                                            if e.text == Key.Return {
+                                                if e.modifiers.control && e.modifiers.alt {
+                                                    root.replace-all();
+                                                } else {
+                                                    root.replace-one();
+                                                }
+                                                return EventResult.accept;
+                                            }
+                                            if e.text == Key.Escape {
+                                                root.find-close();
+                                                return EventResult.accept;
+                                            }
+                                            return EventResult.reject;
+                                        }
+                                    }
+
+                                    if root.replace-text == "": Text {
+                                        x: 6px;
+                                        text: "Replace";
+                                        color: T.fg-muted;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                                if root.replace-open: HorizontalLayout {
+                                    x: 282px;
+                                    y: 37px;
+                                    height: 22px;
+                                    spacing: 2px;
+                                    alignment: start;
+                                    ToolButton {
+                                        icon: Icons.replace;
+                                        clicked => {
+                                            root.replace-one();
+                                        }
+                                    }
+
+                                    ToolButton {
+                                        icon: Icons.replace-all;
+                                        clicked => {
+                                            root.replace-all();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ================= STATUS BAR =================
+            Rectangle {
+                height: 22px;
+                background: T.bg-side;
+                Rectangle {
+                    y: 0;
+                    height: 1px;
+                    background: T.border;
+                }
+
+                HorizontalLayout {
+                    spacing: 0;
+                    StatusItem {
+                        icon: Icons.remote-indicator;
+                        text: root.status-remote-busy ? "Opening Remote..." : root.status-remote;
+                        fg: #ffffff;
+                        bg: T.accent;
+                        hover-bg: T.accent-hover;
+                        clicked => {
+                            root.status-clicked("remote");
+                        }
+                    }
+
+                    StatusItem {
+                        icon: Icons.error;
+                        text: "0";
+                    }
+
+                    StatusItem {
+                        icon: Icons.warning;
+                        text: "0";
+                    }
+
+                    if root.status-message != "": Text {
+                        text: root.status-message;
+                        color: T.fg;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                    }
+                    Rectangle {
+                        horizontal-stretch: 1;
+                    }
+
+                    if root.editor-visible: StatusItem {
+                        text: root.status-lncol;
+                        clicked => {
+                            root.status-clicked("lncol");
+                        }
+                    }
+                    if root.editor-visible: StatusItem {
+                        text: root.status-indent;
+                        clicked => {
+                            root.status-clicked("indent");
+                        }
+                    }
+                    if root.editor-visible: StatusItem {
+                        text: root.status-encoding;
+                    }
+                    if root.editor-visible: StatusItem {
+                        text: root.status-eol;
+                        clicked => {
+                            root.status-clicked("eol");
+                        }
+                    }
+                    if root.editor-visible: StatusItem {
+                        text: root.status-lang;
+                        clicked => {
+                            root.status-clicked("lang");
+                        }
+                    }
+                    StatusItem {
+                        icon: Icons.bell;
+                    }
+
+                    Rectangle {
+                        width: 6px;
+                    }
+                }
+            }
+        }
+
+        // ================= SASH (sidebar resize) =================
+        if root.sidebar-visible: sash := TouchArea {
+            x: 48px + root.sidebar-width - 2px;
+            y: 35px;
+            width: 4px;
+            height: root.height - 35px - 22px;
+            mouse-cursor: ew-resize;
+            moved => {
+                if self.pressed {
+                    root.sidebar-width = clamp(root.sidebar-width + self.mouse-x - self.pressed-x, 170px, root.width - 360px);
+                }
+            }
+            Rectangle {
+                background: parent.pressed || parent.has-hover ? T.accent : transparent;
+            }
+        }
+
+        // ================= NOTIFICATIONS =================
+        VerticalLayout {
+            x: root.width - self.width - 12px;
+            y: root.height - 22px - 12px - self.preferred-height;
+            width: 450px;
+            height: self.preferred-height;
+            spacing: 6px;
+            for t[i] in root.toasts: Rectangle {
+                height: max(42px, tl.preferred-height + 20px);
+                background: T.widget-bg;
+                border-radius: 4px;
+                border-width: 1px;
+                border-color: #303031;
+                drop-shadow-blur: 10px;
+                drop-shadow-color: T.shadow;
+                tl := HorizontalLayout {
+                    padding: 10px;
+                    padding-left: 12px;
+                    spacing: 10px;
+                    Icon {
+                        d: t.kind == 2 ? Icons.error : t.kind == 1 ? Icons.warning : Icons.info;
+                        size: 16px;
+                        color: t.kind == 2 ? T.error : t.kind == 1 ? T.warning : T.info;
+                    }
+
+                    Text {
+                        text: t.message;
+                        color: T.fg;
+                        wrap: word-wrap;
+                        horizontal-stretch: 1;
+                        vertical-alignment: center;
+                    }
+
+                    ToolButton {
+                        icon: Icons.close;
+                        clicked => {
+                            root.toast-close(i);
+                        }
+                    }
+                }
+            }
+        }
+
+        // ================= POPUP MENU =================
+        if root.popup-open: pop := Rectangle {
+            x: 0;
+            y: root.popup-from-menubar ? 35px : 0;
+            width: root.width;
+            height: root.height - self.y;
+            TouchArea {
+                pointer-event(e) => {
+                    if e.kind == PointerEventKind.down {
+                        root.popup-dismiss();
+                    }
+                }
+            }
+
+            property <int> sel: -1;
+            menu-box := Rectangle {
+                x: min(root.popup-x, root.width - self.width - 4px);
+                y: min(root.popup-y - parent.y, parent.height - self.height - 4px);
+                width: max(300px, ml.preferred-width);
+                height: ml.preferred-height;
+                background: T.menu-bg;
+                border-radius: 5px;
+                border-width: 1px;
+                border-color: T.menu-border;
+                drop-shadow-blur: 8px;
+                drop-shadow-color: T.shadow;
+                TouchArea { }
+
+                pfs := FocusScope {
+                    init => {
+                        self.focus();
+                    }
+                    key-pressed(e) => {
+                        if e.text == Key.Escape {
+                            root.popup-dismiss();
+                            return EventResult.accept;
+                        }
+                        if e.text == Key.DownArrow {
+                            pop.sel = Math.mod(pop.sel + 1, root.popup-items.length);
+                            return EventResult.accept;
+                        }
+                        if e.text == Key.UpArrow {
+                            pop.sel = pop.sel <= 0 ? root.popup-items.length - 1 : pop.sel - 1;
+                            return EventResult.accept;
+                        }
+                        if e.text == Key.Return && pop.sel >= 0 {
+                            root.popup-activated(pop.sel);
+                            return EventResult.accept;
+                        }
+                        return EventResult.reject;
+                    }
+                }
+
+                ml := VerticalLayout {
+                    padding-top: 4px;
+                    padding-bottom: 4px;
+                    for it[i] in root.popup-items: Rectangle {
+                        height: it.separator ? 9px : 26px;
+                        if it.separator: Rectangle {
+                            x: 10px;
+                            width: parent.width - 20px;
+                            height: 1px;
+                            background: T.menu-border;
+                        }
+                        if !it.separator: Rectangle {
+                            x: 4px;
+                            width: parent.width - 8px;
+                            border-radius: 3px;
+                            background: it.enabled && (ita.has-hover || pop.sel == i) ? T.menu-sel : transparent;
+                            HorizontalLayout {
+                                padding-left: 22px;
+                                padding-right: 18px;
+                                spacing: 30px;
+                                Text {
+                                    text: it.label;
+                                    color: it.enabled ? (ita.has-hover || pop.sel == i ? #ffffff : T.fg) : #ffffff55;
+                                    vertical-alignment: center;
+                                    horizontal-stretch: 1;
+                                }
+
+                                Text {
+                                    text: it.keybinding;
+                                    color: it.enabled ? (ita.has-hover || pop.sel == i ? #ffffff : T.fg) : #ffffff55;
+                                    vertical-alignment: center;
+                                    horizontal-alignment: right;
+                                }
+                            }
+
+                            ita := TouchArea {
+                                enabled: it.enabled;
+                                clicked => {
+                                    root.popup-activated(i);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ================= QUICK INPUT =================
+        if root.quick-open: Rectangle {
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.height;
+            TouchArea {
+                pointer-event(e) => {
+                    if e.kind == PointerEventKind.down {
+                        root.quick-cancel();
+                    }
+                }
+            }
+
+            qbox := Rectangle {
+                width: min(600px, root.width - 40px);
+                x: (root.width - self.width) / 2;
+                y: 6px;
+                height: ql.preferred-height;
+                background: T.quick-bg;
+                border-radius: 6px;
+                border-width: 1px;
+                border-color: T.widget-border;
+                drop-shadow-blur: 10px;
+                drop-shadow-color: T.shadow;
+                drop-shadow-offset-y: 2px;
+                TouchArea { }
+
+                ql := VerticalLayout {
+                    padding: 6px;
+                    spacing: 4px;
+                    if root.quick-title != "": Text {
+                        text: root.quick-title;
+                        color: T.fg;
+                        horizontal-alignment: center;
+                        font-size: 12px;
+                    }
+                    Rectangle {
+                        height: 26px;
+                        background: T.input-bg;
+                        border-radius: 2px;
+                        border-width: 1px;
+                        border-color: qi.has-focus ? T.focus-border : T.input-border;
+                        qi := TextInput {
+                            x: 6px;
+                            width: parent.width - 12px;
+                            height: parent.height;
+                            vertical-alignment: center;
+                            single-line: true;
+                            input-type: root.quick-password ? InputType.password : InputType.text;
+                            text <=> root.quick-text;
+                            color: T.fg;
+                            selection-background-color: T.selection;
+                            init => {
+                                self.focus();
+                                if root.quick-cursor-pos >= 0 {
+                                    self.set-selection-offsets(root.quick-cursor-pos, root.quick-cursor-pos);
+                                } else {
+                                    self.select-all();
+                                }
+                            }
+                            property <int> reset: root.quick-reset-cursor;
+                            changed reset => {
+                                self.set-selection-offsets(root.quick-cursor-pos, root.quick-cursor-pos);
+                            }
+                            edited => {
+                                root.quick-index = 0;
+                                ql-view.content-y = 0;
+                                root.quick-edited(self.text);
+                            }
+                            key-pressed(e) => {
+                                if e.text == Key.Escape {
+                                    root.quick-cancel();
+                                    return EventResult.accept;
+                                }
+                                if e.text == Key.Return {
+                                    root.quick-accept(root.quick-index);
+                                    return EventResult.accept;
+                                }
+                                if e.text == Key.DownArrow && root.quick-items.length > 0 {
+                                    root.quick-index = Math.mod(root.quick-index + 1, root.quick-items.length);
+                                    ql-view.keep-visible();
+                                    return EventResult.accept;
+                                }
+                                if e.text == Key.UpArrow && root.quick-items.length > 0 {
+                                    root.quick-index = root.quick-index <= 0 ? root.quick-items.length - 1 : root.quick-index - 1;
+                                    ql-view.keep-visible();
+                                    return EventResult.accept;
+                                }
+                                if e.text == Key.PageDown && root.quick-items.length > 0 {
+                                    root.quick-index = min(root.quick-items.length - 1, root.quick-index + 10);
+                                    ql-view.keep-visible();
+                                    return EventResult.accept;
+                                }
+                                if e.text == Key.PageUp && root.quick-items.length > 0 {
+                                    root.quick-index = max(0, root.quick-index - 10);
+                                    ql-view.keep-visible();
+                                    return EventResult.accept;
+                                }
+                                return EventResult.reject;
+                            }
+                        }
+
+                        if root.quick-text == "": Text {
+                            x: 6px;
+                            text: root.quick-placeholder;
+                            color: T.fg-muted;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    ql-view := ListView {
+                        visible: root.quick-items.length > 0;
+                        height: min(root.quick-items.length, 15) * 22px;
+                        public function keep-visible() {
+                            if root.quick-index * 22px + self.content-y < 0 {
+                                self.content-y = -root.quick-index * 22px;
+                            } else if (root.quick-index + 1) * 22px + self.content-y > self.visible-height {
+                                self.content-y = self.visible-height - (root.quick-index + 1) * 22px;
+                            }
+                        }
+                        for q[i] in root.quick-items: Rectangle {
+                            height: 22px;
+                            border-radius: 3px;
+                            background: q.selectable && i == root.quick-index ? T.list-active : qa.has-hover && q.selectable ? T.hover : transparent;
+                            HorizontalLayout {
+                                padding-left: 11px;
+                                padding-right: 11px;
+                                spacing: 6px;
+                                if q.glyph != "": Text {
+                                    width: 18px;
+                                    text: q.glyph;
+                                    color: q.glyph-color;
+                                    font-size: 10px;
+                                    font-weight: 700;
+                                    vertical-alignment: center;
+                                }
+                                Text {
+                                    text: q.label;
+                                    color: q.selectable ? T.fg-bright : T.fg;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                }
+
+                                Text {
+                                    text: q.desc;
+                                    color: T.fg-muted;
+                                    font-size: 12px;
+                                    vertical-alignment: center;
+                                    overflow: elide;
+                                    horizontal-stretch: 1;
+                                }
+
+                                if q.keybinding != "": Text {
+                                    text: q.keybinding;
+                                    color: T.fg-dim;
+                                    font-size: 12px;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            qa := TouchArea {
+                                enabled: q.selectable;
+                                clicked => {
+                                    root.quick-index = i;
+                                    root.quick-accept(i);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ================= MODAL DIALOG =================
+        if root.dialog-open: Rectangle {
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.height;
+            background: #00000066;
+            TouchArea { }
+
+            Rectangle {
+                width: 460px;
+                height: dl.preferred-height;
+                x: (root.width - self.width) / 2;
+                y: (root.height - self.height) / 3;
+                background: T.widget-bg;
+                border-radius: 6px;
+                border-width: 1px;
+                border-color: T.menu-border;
+                drop-shadow-blur: 16px;
+                drop-shadow-color: #00000099;
+                dfs := FocusScope {
+                    init => {
+                        self.focus();
+                    }
+                    key-pressed(e) => {
+                        if e.text == Key.Escape {
+                            root.dialog-result(-1);
+                            return EventResult.accept;
+                        }
+                        if e.text == Key.Return {
+                            root.dialog-result(0);
+                            return EventResult.accept;
+                        }
+                        return EventResult.reject;
+                    }
+                }
+
+                dl := VerticalLayout {
+                    padding: 20px;
+                    spacing: 12px;
+                    HorizontalLayout {
+                        spacing: 14px;
+                        Icon {
+                            d: Icons.warning;
+                            size: 32px;
+                            stroke-w: 1.5px;
+                            color: T.warning;
+                        }
+
+                        VerticalLayout {
+                            spacing: 8px;
+                            Text {
+                                text: root.dialog-message;
+                                color: T.fg-bright;
+                                font-weight: 600;
+                                wrap: word-wrap;
+                            }
+
+                            if root.dialog-detail != "": Text {
+                                text: root.dialog-detail;
+                                color: T.fg;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        alignment: end;
+                        spacing: 8px;
+                        for b[i] in root.dialog-buttons: BlueButton {
+                            text: b;
+                            secondary: i > 0;
+                            clicked => {
+                                root.dialog-result(i);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // keyboard focus target for the explorer tree (invisible, keeps focus when a row is clicked)
+        tree-fs := FocusScope {
+            x: 0;
+            y: 0;
+            width: 0;
+            height: 0;
+            focus-on-click: false;
+            key-pressed(e) => {
+                if root.tree-key(e.text, e.modifiers.control, e.modifiers.shift, e.modifiers.alt) {
+                    return EventResult.accept;
+                }
+                return EventResult.reject;
+            }
+        }
+    }
+}

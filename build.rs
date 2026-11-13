@@ -1,0 +1,5 @@
+fn main() {
+    // fluent-dark: ScrollBar/ListView look closest to VSCode's dark overlay scrollbars.
+    let config = slint_build::CompilerConfiguration::new().with_style("fluent-dark".into());
+    slint_build::compile_with_config("ui/app.slint", config).expect("slint build failed");
+}

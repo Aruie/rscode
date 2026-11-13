@@ -1,0 +1,376 @@
+import { T } from "theme.slint";
+import { Icons, Icon } from "icons.slint";
+
+export struct TreeRow {
+    name: string,
+    depth: int,
+    is-dir: bool,
+    expanded: bool,
+    glyph: string,
+    glyph-color: color,
+    selected: bool,
+    loading: bool,
+}
+
+export struct TabItem {
+    title: string,
+    desc: string,
+    dirty: bool,
+    active: bool,
+    glyph: string,
+    glyph-color: color,
+}
+
+export struct QuickItem {
+    label: string,
+    desc: string,
+    detail: string,
+    glyph: string,
+    glyph-color: color,
+    keybinding: string,
+    selectable: bool,
+}
+
+export struct MenuItemData {
+    label: string,
+    keybinding: string,
+    separator: bool,
+    enabled: bool,
+}
+
+export struct HostRow {
+    name: string,
+    detail: string,
+    connected: bool,
+}
+
+export struct Crumb {
+    label: string,
+    glyph: string,
+    glyph-color: color,
+}
+
+export struct Toast {
+    message: string,
+    kind: int, // 0 info, 1 warning, 2 error, 3 progress
+}
+
+// Small square icon button used in toolbars (explorer header, find widget, tabs).
+export component ToolButton inherits Rectangle {
+    in property <string> icon;
+    in property <length> icon-size: 16px;
+    in property <bool> toggled: false;
+    in property <bool> enabled: true;
+    in property <brush> icon-color: T.fg;
+    callback clicked();
+    width: 22px;
+    height: 22px;
+    border-radius: 5px;
+    background: !root.enabled ? transparent : root.toggled ? #2489db51 : ta.has-hover ? T.toolbar-hover : transparent;
+    border-width: root.toggled ? 1px : 0px;
+    border-color: T.focus-border;
+    Icon {
+        d: root.icon;
+        size: root.icon-size;
+        color: root.enabled ? root.icon-color : #ffffff40;
+    }
+    ta := TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+export component ActivityItem inherits Rectangle {
+    in property <string> icon;
+    in property <bool> active;
+    callback clicked();
+    width: 48px;
+    height: 48px;
+    Rectangle {
+        x: 0;
+        width: 2px;
+        background: root.active ? T.fg-bright : transparent;
+    }
+
+    Icon {
+        d: root.icon;
+        size: 24px;
+        stroke-w: 1.5px;
+        color: root.active || ta.has-hover ? T.fg-bright : T.fg-muted;
+    }
+
+    ta := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+export component TreeRowView inherits Rectangle {
+    in property <TreeRow> data;
+    in property <bool> focused;
+    callback clicked();
+    callback context(length, length);
+    height: 22px;
+    background: root.data.selected ? (root.focused ? T.list-active : T.list-inactive) : ta.has-hover ? T.hover : transparent;
+    border-width: root.data.selected && root.focused ? 1px : 0px;
+    border-color: T.focus-border;
+    HorizontalLayout {
+        padding-left: 4px + root.data.depth * 8px;
+        padding-right: 8px;
+        Rectangle {
+            width: 20px;
+            if root.data.is-dir: Icon {
+                d: root.data.expanded ? Icons.chevron-down : Icons.chevron-right;
+                size: 16px;
+                color: T.fg;
+            }
+        }
+
+        if !root.data.is-dir: Rectangle {
+            width: 22px;
+            Text {
+                x: 0;
+                text: root.data.glyph;
+                color: root.data.glyph-color;
+                font-size: 10px;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
+        }
+        Text {
+            text: root.data.loading ? root.data.name + "  …" : root.data.name;
+            color: T.fg;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+
+    ta := TouchArea {
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down && e.button == PointerEventButton.right {
+                root.context(self.absolute-position.x + self.mouse-x, self.absolute-position.y + self.mouse-y);
+            }
+        }
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+export component EditorTab inherits Rectangle {
+    in property <TabItem> tab;
+    callback clicked();
+    callback close();
+    height: 35px;
+    width: hl.preferred-width;
+    background: root.tab.active ? T.bg-editor : T.bg-side;
+    // top accent / bottom border
+    Rectangle {
+        y: 0;
+        height: 1px;
+        background: root.tab.active ? T.accent : transparent;
+    }
+
+    Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: root.tab.active ? transparent : T.border;
+    }
+
+    Rectangle {
+        x: parent.width - 1px;
+        width: 1px;
+        background: T.border;
+    }
+
+    ta := TouchArea {
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.up && e.button == PointerEventButton.middle {
+                root.close();
+            }
+        }
+        clicked => {
+            root.clicked();
+        }
+    }
+
+    hl := HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 8px;
+        spacing: 6px;
+        alignment: start;
+        Text {
+            text: root.tab.glyph;
+            color: root.tab.glyph-color;
+            font-size: 10px;
+            font-weight: 700;
+            vertical-alignment: center;
+        }
+
+        Text {
+            text: root.tab.title;
+            color: root.tab.active ? T.fg-bright : T.fg-dim;
+            vertical-alignment: center;
+        }
+
+        if root.tab.desc != "": Text {
+            text: root.tab.desc;
+            color: T.fg-muted;
+            font-size: 12px;
+            vertical-alignment: center;
+        }
+        Rectangle {
+            width: 20px;
+            close := Rectangle {
+                width: 20px;
+                height: 20px;
+                border-radius: 4px;
+                background: cta.has-hover ? T.toolbar-hover : transparent;
+                if root.tab.dirty && !cta.has-hover: Rectangle {
+                    width: 8px;
+                    height: 8px;
+                    border-radius: 4px;
+                    background: root.tab.active ? T.fg-bright : T.fg-dim;
+                }
+                if (!root.tab.dirty || cta.has-hover) && (root.tab.active || ta.has-hover || cta.has-hover): Icon {
+                    d: Icons.close;
+                    size: 16px;
+                    color: root.tab.active ? T.fg-bright : T.fg-dim;
+                }
+                cta := TouchArea {
+                    clicked => {
+                        root.close();
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component StatusItem inherits Rectangle {
+    in property <string> text;
+    in property <string> icon;
+    in property <brush> fg: T.fg;
+    in property <brush> bg: transparent;
+    in property <brush> hover-bg: T.toolbar-hover;
+    callback clicked();
+    height: 22px;
+    horizontal-stretch: 0;
+    background: ta.has-hover ? root.hover-bg : root.bg;
+    HorizontalLayout {
+        padding-left: 6px;
+        padding-right: 6px;
+        spacing: 4px;
+        if root.icon != "": Icon {
+            y: (22px - 14px) / 2;
+            d: root.icon;
+            size: 14px;
+            color: root.fg;
+        }
+        if root.text != "": Text {
+            text: root.text;
+            color: root.fg;
+            font-size: 12px;
+            vertical-alignment: center;
+        }
+    }
+
+    ta := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+export component MenuTitle inherits Rectangle {
+    in property <string> label;
+    in property <bool> open;
+    callback pressed();
+    callback hovered();
+    height: 26px;
+    width: txt.preferred-width + 16px;
+    border-radius: 5px;
+    background: root.open || ta.has-hover ? T.toolbar-hover : transparent;
+    txt := Text {
+        text: root.label;
+        color: T.fg;
+        vertical-alignment: center;
+    }
+
+    ta := TouchArea {
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down && e.button == PointerEventButton.left {
+                root.pressed();
+            }
+        }
+        changed has-hover => {
+            if self.has-hover {
+                root.hovered();
+            }
+        }
+    }
+}
+
+export component WinButton inherits Rectangle {
+    in property <string> icon;
+    in property <bool> danger;
+    callback clicked();
+    width: 46px;
+    background: ta.has-hover ? (root.danger ? T.close-red : T.toolbar-hover) : transparent;
+    Icon {
+        d: root.icon;
+        size: 16px;
+        stroke-w: 1px;
+        color: ta.has-hover && root.danger ? #ffffff : T.fg;
+    }
+
+    ta := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+export component BlueButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> secondary;
+    callback clicked();
+    height: 26px;
+    border-radius: 2px;
+    background: root.secondary ? (ta.has-hover ? #3c3c3c : #313131) : (ta.has-hover ? T.accent-hover : T.accent);
+    border-width: root.secondary ? 1px : 0px;
+    border-color: #ffffff12;
+    min-width: txt.preferred-width + 26px;
+    txt := Text {
+        text: root.text;
+        color: #ffffff;
+        vertical-alignment: center;
+        horizontal-alignment: center;
+    }
+
+    ta := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+export component KeyCap inherits Rectangle {
+    in property <string> text;
+    height: 18px;
+    width: t.preferred-width + 10px;
+    border-radius: 3px;
+    background: #8080802b;
+    border-width: 1px;
+    border-color: #33333399;
+    t := Text {
+        text: root.text;
+        color: T.fg-dim;
+        font-size: 11px;
+        vertical-alignment: center;
+        horizontal-alignment: center;
+    }
+}
