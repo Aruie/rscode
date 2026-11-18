@@ -22,7 +22,9 @@ The binary is `target\release\rcode.exe`.
 - Tabs: `Ctrl+W`, `Ctrl+Tab`, `Ctrl+PageUp/PageDown`, `Ctrl+Shift+T`, middle click to close, save prompts.
 - Remote-SSH (SFTP): hosts from `~/.ssh/config` (Remote Explorer, `Ctrl+Alt+O`, or the status bar button). Key files from `IdentityFile` or `~/.ssh/id_*` (passphrase prompt), then password. Unknown host keys are confirmed and saved to `known_hosts`; a changed key refuses the connection.
 
-Not yet: syntax highlighting, multiple cursors, terminal, search across files, git, ssh-agent, ProxyJump.
+- Syntax highlighting with tree-sitter. Grammars are loaded at runtime from a `grammars/` folder next to the executable (or `$RCODE_GRAMMARS`), one subfolder per language with `parser.dll` (`.so` on Linux), `highlights.scm` and `config.txt`. Adding a language needs no rebuild of the editor. Build the folder with `python3 tools/build_grammars.py --target windows --out <dir>/grammars` (needs `zig`).
+
+Not yet: multiple cursors, terminal, search across files, git, ssh-agent, ProxyJump.
 
 ## Development
 

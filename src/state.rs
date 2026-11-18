@@ -7,7 +7,7 @@ use crate::remote::{self, Event, Req};
 use crate::ssh_config::{self, HostEntry};
 use crate::text_ops::{self as ops, Edit, Sel};
 use crate::tree::Tree;
-use crate::{App, Crumb, HostRow, MenuItemData, QuickItem, TabItem, Toast, TreeRow};
+use crate::{App, Crumb, HlLine, HlSpan, HostRow, MenuItemData, QuickItem, TabItem, Toast, TreeRow};
 use slint::platform::Key;
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel, Weak};
 use std::cell::RefCell;
@@ -240,6 +240,10 @@ pub struct State {
     pending_then: Option<Then>,
     pending_saves: usize,
     save_failed: bool,
+    hl_timer: slint::Timer,
+    hl_lines: Rc<VecModel<HlLine>>,
+    view_first: usize,
+    view_rows: usize,
 }
 
 fn rows_model<T: Clone + 'static>(m: &Rc<VecModel<T>>) -> ModelRc<T> {
@@ -264,6 +268,8 @@ impl State {
         app.set_crumbs(rows_model(&m.crumbs));
         app.set_hosts(rows_model(&m.hosts));
         app.set_popup_items(rows_model(&m.popup));
+        let hl_lines = Rc::new(VecModel::default());
+        app.set_hl_lines(rows_model(&hl_lines));
         let mut s = State {
             app: app.as_weak(),
             m,
@@ -299,6 +305,10 @@ impl State {
             pending_then: None,
             pending_saves: 0,
             save_failed: false,
+            hl_timer: slint::Timer::default(),
+            hl_lines,
+            view_first: 0,
+            view_rows: 60,
         };
         s.reload_hosts();
         s.refresh_title();
@@ -467,7 +477,7 @@ impl State {
         app.set_status_lncol(lncol.into());
         app.set_status_indent(if d.use_tabs { format!("Tab Size: {}", d.tab_size) } else { format!("Spaces: {}", d.tab_size) }.into());
         app.set_status_eol(if d.crlf { "CRLF" } else { "LF" }.into());
-        app.set_status_lang(d.lang.name.into());
+        app.set_status_lang(d.lang_name().into());
         app.set_cursor_line((l - 1) as i32);
     }
 
@@ -598,6 +608,8 @@ impl State {
         self.refresh_line_info();
         self.refresh_status();
         self.refresh_title();
+        self.refresh_visible();
+        self.schedule_highlight();
         if self.find.open {
             self.find_count();
         }
@@ -616,6 +628,8 @@ impl State {
     fn after_text_change(&mut self) {
         self.refresh_line_info();
         self.refresh_status();
+        self.refresh_visible();
+        self.schedule_highlight();
         let was_dirty: Vec<bool> = self.m.tabs.iter().map(|t| t.dirty).collect();
         let now_dirty: Vec<bool> = self.tabs.iter().map(|t| t.doc.is_dirty()).collect();
         if was_dirty != now_dirty {
@@ -625,6 +639,72 @@ impl State {
         if self.find.open {
             self.find_count();
         }
+    }
+
+    // ------------------------------------------------------------------ syntax highlighting
+
+    pub(crate) fn schedule_highlight(&mut self) {
+        if self.active_tab().and_then(|t| t.doc.grammar).is_none() {
+            return;
+        }
+        self.hl_timer.start(slint::TimerMode::SingleShot, Duration::from_millis(40), || {
+            with_state(|s| s.run_highlight());
+        });
+    }
+
+    fn run_highlight(&mut self) {
+        let Some(i) = self.active else { return };
+        let d = &mut self.tabs[i].doc;
+        let Some(g) = d.grammar else { return };
+        match crate::syntax::highlight(g, &d.text) {
+            Ok(spans) => d.spans = spans,
+            Err(_) => {
+                d.grammar = None;
+                d.spans.clear();
+                for e in crate::syntax::take_load_errors() {
+                    self.toast(2, format!("Syntax highlighting is unavailable: {e}"));
+                }
+            }
+        }
+        self.refresh_visible();
+    }
+
+    pub fn editor_viewport(&mut self, first: usize, rows: usize) {
+        self.view_first = first;
+        self.view_rows = rows.max(1);
+        self.refresh_visible();
+    }
+
+    /// Rebuild the colored overlay for the visible lines (plus a small margin).
+    fn refresh_visible(&mut self) {
+        let app = self.ui();
+        let doc = self.active_tab().map(|t| &t.doc).filter(|d| d.grammar.is_some() && d.message.is_empty());
+        let Some(d) = doc else {
+            app.set_hl_active(false);
+            self.hl_lines.set_vec(Vec::new());
+            return;
+        };
+        app.set_hl_active(true);
+        let first = self.view_first.saturating_sub(2);
+        let last = self.view_first + self.view_rows + 2;
+        let text = d.text.as_str();
+        let mut ls = ops::line_offset(text, first);
+        let mut idx = ops::line_index(text, ls);
+        let mut lines = Vec::with_capacity(last - first);
+        while idx <= last {
+            let le = ops::line_end(text, ls);
+            let spans: Vec<HlSpan> = crate::syntax::line_runs(text, ls, le, &d.spans)
+                .into_iter()
+                .map(|(t, c)| HlSpan { text: t.into(), color: lang::color(c) })
+                .collect();
+            lines.push(HlLine { line: idx as i32, spans: ModelRc::from(Rc::new(VecModel::from(spans))) });
+            if le >= text.len() {
+                break;
+            }
+            ls = le + 1;
+            idx += 1;
+        }
+        self.hl_lines.set_vec(lines);
     }
 
     fn save_view_state(&mut self) {
@@ -730,7 +810,7 @@ impl State {
         } else if ctrl && !alt {
             match (k, shift) {
                 ("k", true) => Some(ops::delete_lines(t, sel)),
-                ("/", false) | ("7", false) => ops::toggle_line_comment(t, sel, d.lang.comment),
+                ("/", false) | ("7", false) => ops::toggle_line_comment(t, sel, d.comment_token()),
                 ("]", false) => Some(ops::indent_lines(t, sel, &unit)),
                 ("[", false) => Some(ops::outdent_lines(t, sel, tab)),
                 ("l", false) => {

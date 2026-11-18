@@ -9,6 +9,7 @@ mod remote;
 #[cfg(feature = "screenshot")]
 mod shot;
 mod ssh_config;
+mod syntax;
 mod state;
 mod text_ops;
 mod tree;
@@ -98,6 +99,9 @@ pub(crate) fn wire(app: &App) {
     });
     app.on_editor_cursor_moved(|c, a| {
         with_state(|s| s.editor_cursor_moved(c.max(0) as usize, a.max(0) as usize));
+    });
+    app.on_editor_viewport(|first, rows| {
+        with_state(|s| s.editor_viewport(first.max(0) as usize, rows.max(0) as usize));
     });
     app.on_gutter_clicked(|line, shift| {
         with_state(|s| s.gutter_clicked(line, shift));

@@ -43,6 +43,14 @@ impl State {
                 self.load_editor();
                 self.request_close_tab(i);
             }
+            "select" => {
+                // selection background comes from the input, glyphs from the overlay: they must line up
+                let a = t.find("impl Sel").unwrap_or(0);
+                let b = t[a..].find("pub fn start").map(|x| a + x + 12).unwrap_or(a);
+                self.ui().invoke_focus_editor();
+                self.set_sel(Sel::new(a + 5, b));
+                self.center_line(10);
+            }
             "context" => {
                 self.tree_context(0, 120.0, 140.0);
             }

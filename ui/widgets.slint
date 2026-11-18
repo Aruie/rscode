@@ -12,6 +12,16 @@ export struct TreeRow {
     loading: bool,
 }
 
+export struct HlSpan {
+    text: string,
+    color: color,
+}
+
+export struct HlLine {
+    line: int,
+    spans: [HlSpan],
+}
+
 export struct TabItem {
     title: string,
     desc: string,

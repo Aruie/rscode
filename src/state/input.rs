@@ -394,6 +394,10 @@ impl State {
                     (PickKind::Lang, QAction::Choice(c)) => {
                         if let (Some(i), Some(l)) = (self.active, lang::all().nth(c)) {
                             self.tabs[i].doc.lang = l;
+                            let reg = crate::syntax::registry();
+                            self.tabs[i].doc.grammar = reg.by_lang_name(l.name);
+                            self.tabs[i].doc.spans.clear();
+                            self.schedule_highlight();
                             self.refresh_tabs();
                             self.refresh_status();
                         }

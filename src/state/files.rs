@@ -352,6 +352,7 @@ impl State {
         let t = &mut self.tabs[idx];
         t.doc.lang = lang::detect(&loc.file_name());
         t.doc.loc = loc;
+        t.doc.detect_grammar();
         t.doc.read_only = false;
         self.active = self.tab_index(id).or(self.active);
         self.save_tab(self.tab_index(id).unwrap());
@@ -810,6 +811,7 @@ impl State {
                             _ => Where::Local(PathBuf::from(new)),
                         };
                         t.doc.lang = lang::detect(&t.doc.loc.file_name());
+                        t.doc.detect_grammar();
                     }
                 }
                 let parent = self.parent_of(from);

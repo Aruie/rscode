@@ -2,11 +2,11 @@ import { ListView, ScrollView } from "std-widgets.slint";
 import { T } from "theme.slint";
 import { Icons, Icon, AppLogo } from "icons.slint";
 import {
-    TreeRow, TabItem, QuickItem, MenuItemData, HostRow, Crumb, Toast,
+    TreeRow, TabItem, QuickItem, MenuItemData, HostRow, Crumb, Toast, HlSpan, HlLine,
     ToolButton, ActivityItem, TreeRowView, EditorTab, StatusItem, MenuTitle, WinButton, BlueButton, KeyCap
 } from "widgets.slint";
 
-export { TreeRow, TabItem, QuickItem, MenuItemData, HostRow, Crumb, Toast }
+export { TreeRow, TabItem, QuickItem, MenuItemData, HostRow, Crumb, Toast, HlSpan, HlLine }
 
 export component App inherits Window {
     // ---------- window ----------
@@ -73,6 +73,21 @@ export component App inherits Window {
     out property <length> line-h: ti.preferred-height / max(1, root.line-count);
     out property <bool> editor-focused: ti.has-focus;
     callback editor-edited(string);
+    in property <bool> hl-active;
+    in property <[HlLine]> hl-lines;
+    in-out property <length> caret-x;
+    in-out property <length> caret-y;
+    in-out property <bool> caret-on: true;
+    // first visible line and how many fit, reported whenever they change
+    out property <int> view-first: max(0, floor(-sv.content-y / root.line-h));
+    out property <int> view-rows: ceil(sv.visible-height / root.line-h) + 1;
+    callback editor-viewport(int, int);
+    changed view-first => {
+        root.editor-viewport(root.view-first, root.view-rows);
+    }
+    changed view-rows => {
+        root.editor-viewport(root.view-first, root.view-rows);
+    }
     callback editor-key(string, bool, bool, bool) -> bool;
     callback editor-cursor-moved(int, int);
     callback gutter-clicked(int, bool);
@@ -175,6 +190,13 @@ export component App inherits Window {
     }
 
     private property <length> ch: root.editor-font-size * 0.55;
+    Timer {
+        interval: 530ms;
+        running: root.hl-active && root.editor-focused;
+        triggered => {
+            root.caret-on = !root.caret-on;
+        }
+    }
     private property <length> gutter-w: max(5, root.line-digits) * root.ch + 34px;
 
     root-fs := FocusScope {
@@ -869,9 +891,11 @@ export component App inherits Window {
                                         font-family: T.mono-font;
                                         font-size: root.editor-font-size;
                                         line-height-factor: 1.17;
-                                        color: #cccccc;
+                                        // with a grammar the text is drawn by the colored overlay below,
+                                        // so the input only draws the selection background
+                                        color: root.hl-active ? transparent : #cccccc;
                                         selection-background-color: T.selection;
-                                        selection-foreground-color: #cccccc;
+                                        selection-foreground-color: root.hl-active ? transparent : #cccccc;
                                         text-cursor-width: 2px;
                                         page-height: sv.visible-height;
                                         edited => {
@@ -895,8 +919,38 @@ export component App inherits Window {
                                             } else if p.x + sv.content-x > sv.visible-width - root.gutter-w - 30px {
                                                 sv.content-x = min(0px, sv.visible-width - root.gutter-w - 30px - p.x);
                                             }
+                                            root.caret-x = p.x;
+                                            root.caret-y = p.y;
+                                            root.caret-on = true;
                                             root.editor-cursor-moved(self.cursor-position-byte-offset, self.anchor-position-byte-offset);
                                         }
+                                    }
+
+                                    // colored text, only for the visible lines
+                                    for l in root.hl-lines: HorizontalLayout {
+                                        x: root.gutter-w;
+                                        y: l.line * root.line-h;
+                                        height: root.line-h;
+                                        spacing: 0;
+                                        alignment: start;
+                                        for sp in l.spans: Text {
+                                            text: sp.text;
+                                            color: sp.color;
+                                            font-family: T.mono-font;
+                                            font-size: root.editor-font-size;
+                                            line-height-factor: 1.17;
+                                            vertical-alignment: top;
+                                            wrap: no-wrap;
+                                        }
+                                    }
+
+                                    // the input's own caret is invisible while its text color is transparent
+                                    if root.hl-active && ti.has-focus && root.caret-on && ti.cursor-position-byte-offset == ti.anchor-position-byte-offset: Rectangle {
+                                        x: root.gutter-w + root.caret-x;
+                                        y: root.caret-y;
+                                        width: 2px;
+                                        height: root.line-h;
+                                        background: #aeafad;
                                     }
 
                                     // gutter (line numbers), fixed horizontally, only visible lines are created

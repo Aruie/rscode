@@ -55,6 +55,10 @@ pub struct Doc {
     pub use_tabs: bool,
     pub tab_size: usize,
     pub lang: &'static crate::lang::Lang,
+    /// tree-sitter grammar for coloring, if one is installed for this file type.
+    pub grammar: Option<&'static crate::syntax::Grammar>,
+    /// Highlight spans for `text` (may lag one edit behind until the next highlight pass).
+    pub spans: Vec<crate::syntax::Span>,
     pub read_only: bool,
     /// Shown instead of the editor (binary file, loading, error).
     pub message: String,
@@ -78,20 +82,26 @@ impl Doc {
         let use_tabs = detect_tabs(&text);
         let lang = crate::lang::detect(&loc.file_name());
         let saved_hash = hash_text(&text);
-        Doc {
+        let mut d = Doc {
             loc,
             text,
             crlf,
             use_tabs,
             tab_size: 4,
             lang,
+            grammar: None,
+            spans: Vec::new(),
             read_only: false,
             message: String::new(),
             saved_hash,
             undo: Vec::new(),
             redo: Vec::new(),
             sel: Sel::default(),
+        };
+        if !d.loc.file_name().is_empty() {
+            d.detect_grammar();
         }
+        d
     }
 
     pub fn placeholder(loc: Where, message: &str) -> Self {
@@ -99,6 +109,28 @@ impl Doc {
         d.read_only = true;
         d.message = message.to_string();
         d
+    }
+
+    /// Pick the grammar from the file name, falling back to the language mode's name.
+    pub fn detect_grammar(&mut self) {
+        let reg = crate::syntax::registry();
+        let by_name = reg.by_file_name(&self.loc.file_name());
+        self.grammar = by_name.or_else(|| reg.by_lang_name(self.lang.name));
+        self.spans.clear();
+    }
+
+    pub fn lang_name(&self) -> &str {
+        match self.grammar {
+            Some(g) if std::ptr::eq(self.lang, &crate::lang::PLAIN) => &g.name,
+            _ => self.lang.name,
+        }
+    }
+
+    pub fn comment_token(&self) -> &str {
+        match self.grammar {
+            Some(g) if self.lang.comment.is_empty() => &g.comment,
+            _ => self.lang.comment,
+        }
     }
 
     pub fn is_dirty(&self) -> bool {
