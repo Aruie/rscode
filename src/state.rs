@@ -7,7 +7,7 @@ use crate::remote::{self, Event, Req};
 use crate::ssh_config::{self, HostEntry};
 use crate::text_ops::{self as ops, Edit, Sel};
 use crate::tree::Tree;
-use crate::{App, Crumb, HlLine, HlSpan, HostRow, MenuItemData, QuickItem, TabItem, Toast, TreeRow};
+use crate::{App, Crumb, HlLine, HlSpan, HostRow, MenuItemData, QuickItem, SearchRow, TabItem, Toast, TreeRow};
 use slint::platform::Key;
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel, Weak};
 use std::cell::RefCell;
@@ -203,6 +203,7 @@ struct Models {
     crumbs: Rc<VecModel<Crumb>>,
     hosts: Rc<VecModel<HostRow>>,
     popup: Rc<VecModel<MenuItemData>>,
+    search: Rc<VecModel<SearchRow>>,
 }
 
 pub struct State {
@@ -244,6 +245,11 @@ pub struct State {
     hl_lines: Rc<VecModel<HlLine>>,
     view_first: usize,
     view_rows: usize,
+    search: search::SearchState,
+    /// (file, (1-based line, start col, end col)) to select once the file is shown
+    pending_reveal: Option<(Where, (usize, usize, usize))>,
+    stats: crate::stats::Stats,
+    stats_timer: slint::Timer,
 }
 
 fn rows_model<T: Clone + 'static>(m: &Rc<VecModel<T>>) -> ModelRc<T> {
@@ -260,6 +266,7 @@ impl State {
             crumbs: Rc::new(VecModel::default()),
             hosts: Rc::new(VecModel::default()),
             popup: Rc::new(VecModel::default()),
+            search: Rc::new(VecModel::default()),
         };
         app.set_tree_rows(rows_model(&m.tree));
         app.set_tabs(rows_model(&m.tabs));
@@ -268,6 +275,7 @@ impl State {
         app.set_crumbs(rows_model(&m.crumbs));
         app.set_hosts(rows_model(&m.hosts));
         app.set_popup_items(rows_model(&m.popup));
+        app.set_search_rows(rows_model(&m.search));
         let hl_lines = Rc::new(VecModel::default());
         app.set_hl_lines(rows_model(&hl_lines));
         let mut s = State {
@@ -309,8 +317,13 @@ impl State {
             hl_lines,
             view_first: 0,
             view_rows: 60,
+            search: Default::default(),
+            pending_reveal: None,
+            stats: crate::stats::Stats::new(),
+            stats_timer: slint::Timer::default(),
         };
         s.reload_hosts();
+        s.start_stats();
         s.refresh_title();
         s.refresh_status();
         s
@@ -927,6 +940,7 @@ impl State {
 
 mod files;
 mod input;
+mod search;
 #[cfg(feature = "screenshot")]
 mod shot;
 

@@ -51,10 +51,41 @@ impl State {
                 self.set_sel(Sel::new(a + 5, b));
                 self.center_line(10);
             }
+            "search" => {
+                self.open_search_view();
+                self.ui().set_search_text("line_start".into());
+                self.search_edited("line_start");
+                self.run_search_blocking();
+            }
+            "stats" => {
+                for _ in 0..30 {
+                    self.stats.sample();
+                }
+                self.ui().set_stats_label(self.stats.label().into());
+                self.ui().set_stats_open(true);
+                self.refresh_stats_graph();
+            }
             "context" => {
                 self.tree_context(0, 120.0, 140.0);
             }
             _ => {}
         }
+    }
+}
+
+
+impl State {
+    /// The screenshot tool has no event loop to deliver background results, so search inline.
+    fn run_search_blocking(&mut self) {
+        self.run_search();
+        let generation = self.search_cancel_and_generation();
+        let root = PathBuf::from(self.ws_root().unwrap());
+        let q = self.search_query();
+        let mut batches = Vec::new();
+        let res = crate::search::search_local(&root, &q, &std::sync::atomic::AtomicBool::new(false), |b| batches.push(b));
+        for b in batches {
+            self.on_search_batch(generation, b, 0);
+        }
+        self.on_search_done(generation, res.map(|r| r.1));
     }
 }

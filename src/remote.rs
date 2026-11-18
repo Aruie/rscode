@@ -21,6 +21,8 @@ pub enum Req {
     Rename { from: String, to: String },
     IsDir { path: String },
     Walk { root: String },
+    /// Run a shell command and stream its stdout lines (used for search).
+    Exec { id: u64, command: String },
     Disconnect,
 }
 
@@ -36,6 +38,8 @@ pub enum Event {
     Done { op: &'static str, path: String, result: Result<(), String> },
     IsDir { path: String, result: Result<bool, String> },
     Walked { root: String, files: Vec<String>, truncated: bool },
+    ExecLines { id: u64, lines: Vec<String> },
+    ExecDone { id: u64, error: Option<String> },
     Closed(String),
 }
 
@@ -212,6 +216,7 @@ async fn session(host: HostEntry, mut rx: mpsc::UnboundedReceiver<Req>, emit: Em
     if !authenticate(&mut handle, &host, &user, &emit).await? {
         return Err(format!("Permission denied for {user}@{}.", host.hostname));
     }
+    let handle = Arc::new(handle);
     emit(Event::Status("Starting SFTP session...".into()));
     let channel = handle.channel_open_session().await.map_err(|e| e.to_string())?;
     channel.request_subsystem(true, "sftp").await.map_err(|e| e.to_string())?;
@@ -229,6 +234,11 @@ async fn session(host: HostEntry, mut rx: mpsc::UnboundedReceiver<Req>, emit: Em
         }
         // Each request runs as its own task so a long walk doesn't block file reads.
         let (sftp, emit) = (sftp.clone(), emit.clone());
+        if let Req::Exec { id, command } = req {
+            let handle = handle.clone();
+            tokio::spawn(async move { exec(&handle, id, command, &emit).await });
+            continue;
+        }
         tokio::spawn(async move { serve(req, &sftp, &emit).await });
     }
     Ok("Disconnected.".into())
@@ -301,8 +311,42 @@ async fn serve(req: Req, sftp: &SftpSession, emit: &Emit) {
             let (files, truncated) = walk(sftp, &root).await;
             emit(Event::Walked { root, files, truncated });
         }
-        Req::Disconnect => {}
+        Req::Disconnect | Req::Exec { .. } => {}
     }
+}
+
+async fn exec(handle: &client::Handle<Handler>, id: u64, command: String, emit: &Emit) {
+    let res: Result<(), String> = async {
+        let mut ch = handle.channel_open_session().await.map_err(es)?;
+        ch.exec(true, command).await.map_err(es)?;
+        let mut buf: Vec<u8> = Vec::new();
+        let mut last = std::time::Instant::now();
+        let mut lines = Vec::new();
+        while let Some(msg) = ch.wait().await {
+            match msg {
+                russh::ChannelMsg::Data { data } => {
+                    buf.extend_from_slice(&data);
+                    while let Some(nl) = buf.iter().position(|&b| b == b'\n') {
+                        let line: Vec<u8> = buf.drain(..=nl).collect();
+                        lines.push(String::from_utf8_lossy(&line[..line.len() - 1]).into_owned());
+                    }
+                    if !lines.is_empty() && last.elapsed() > std::time::Duration::from_millis(80) {
+                        emit(Event::ExecLines { id, lines: std::mem::take(&mut lines) });
+                        last = std::time::Instant::now();
+                    }
+                }
+                russh::ChannelMsg::Eof | russh::ChannelMsg::Close => break,
+                _ => {}
+            }
+        }
+        if !buf.is_empty() {
+            lines.push(String::from_utf8_lossy(&buf).into_owned());
+        }
+        emit(Event::ExecLines { id, lines });
+        Ok(())
+    }
+    .await;
+    emit(Event::ExecDone { id, error: res.err() });
 }
 
 async fn read_dir(sftp: &SftpSession, path: &str) -> Result<Vec<(String, bool)>, String> {

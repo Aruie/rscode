@@ -8,7 +8,9 @@ mod lang;
 mod remote;
 #[cfg(feature = "screenshot")]
 mod shot;
+mod search;
 mod ssh_config;
+mod stats;
 mod syntax;
 mod state;
 mod text_ops;
@@ -185,6 +187,37 @@ pub(crate) fn wire(app: &App) {
     app.on_find_toggle(|w| {
         with_state(|s| s.find_toggle(&w));
     });
+
+    // ---- search view ----
+    app.on_search_edited(|t| {
+        with_state(|s| s.search_edited(&t));
+    });
+    app.on_search_toggle(|w| {
+        with_state(|s| s.search_toggle(&w));
+    });
+    app.on_search_row_clicked(|i| {
+        with_state(|s| s.search_row_clicked(i as usize));
+    });
+    app.on_search_action(|a| {
+        with_state(|s| s.search_action(&a));
+    });
+    app.on_search_submit(|| {
+        with_state(|s| s.run_search());
+    });
+
+    // ---- CPU / memory meter ----
+    {
+        let w = w.clone();
+        app.on_stats_clicked(move || {
+            if let Some(a) = w.upgrade() {
+                let open = !a.get_stats_open();
+                a.set_stats_open(open);
+                if open {
+                    with_state(|s| s.refresh_stats_graph());
+                }
+            }
+        });
+    }
 
     // ---- status bar / dialog / notifications ----
     app.on_status_clicked(|w| {

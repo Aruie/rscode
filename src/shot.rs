@@ -26,7 +26,7 @@ pub fn run(scene: &str, out: &str) {
     crate::wire(&app);
     app.show().unwrap();
     with_state(|s| s.shot_scene(scene));
-    for _ in 0..3 {
+    for _ in 0..8 {
         std::thread::sleep(std::time::Duration::from_millis(60));
         slint::platform::update_timers_and_animations();
         window.request_redraw();

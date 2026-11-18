@@ -506,7 +506,7 @@ impl State {
                     app.invoke_focus_tree();
                 }
             }
-            "view.search" => self.show_view("search"),
+            "view.search" => self.open_search_view(),
             "view.scm" => self.show_view("scm"),
             "view.run" => self.show_view("run"),
             "view.extensions" => self.show_view("extensions"),
@@ -817,7 +817,7 @@ impl State {
         app.set_active_view(self.view.into());
     }
 
-    fn show_view(&mut self, v: &'static str) {
+    pub(super) fn show_view(&mut self, v: &'static str) {
         self.view = v;
         self.sidebar = true;
         self.sync_sidebar();

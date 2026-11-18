@@ -12,6 +12,19 @@ export struct TreeRow {
     loading: bool,
 }
 
+export struct SearchRow {
+    is-file: bool,
+    expanded: bool,
+    name: string,
+    dir: string,
+    count: int,
+    before: string,
+    hit: string,
+    after: string,
+    glyph: string,
+    glyph-color: color,
+}
+
 export struct HlSpan {
     text: string,
     color: color,

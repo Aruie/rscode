@@ -198,6 +198,7 @@ impl State {
         if self.active == Some(i) {
             self.load_editor();
             self.ui().invoke_focus_editor();
+            self.apply_reveal();
         } else {
             self.refresh_tabs();
         }
@@ -1006,6 +1007,8 @@ impl State {
                 }
             },
             Event::Walked { root, files, truncated } => self.on_walked(root, files, truncated),
+            Event::ExecLines { id, lines } => self.on_exec_lines(id, lines),
+            Event::ExecDone { id, error } => self.on_exec_done(id, error),
         }
     }
 
