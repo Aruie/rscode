@@ -43,7 +43,6 @@ GRAMMARS = [
     ("lua", "tree-sitter-lua", "0.5.0", ".", "Lua", "lua", "--", [], ""),
     ("ruby", "tree-sitter-ruby", "0.23.1", ".", "Ruby", "rb", "#", [], "gemfile rakefile"),
     ("php", "tree-sitter-php", "0.25.1", "php", "PHP", "php", "//", [], ""),
-    ("kotlin", "tree-sitter-kotlin-ng", "1.1.0", ".", "Kotlin", "kt kts", "//", [], ""),
     ("dockerfile", "tree-sitter-dockerfile", "0.2.0", ".", "Dockerfile", "dockerfile", "#", [], "dockerfile"),
     ("xml", "tree-sitter-xml", "0.7.0", "xml", "XML", "xml svg xaml csproj", "", [], ""),
 ]
