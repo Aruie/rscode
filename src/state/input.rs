@@ -15,6 +15,7 @@ impl State {
         self.q_all = rows.clone();
         self.q_rows = rows;
         app.set_quick_password(false);
+        app.set_quick_ok(matches!(self.q_mode, QMode::Browse(_)));
         app.set_quick_cursor_pos(-1);
         app.set_quick_text(text.into());
         app.set_quick_placeholder(placeholder.into());
@@ -264,12 +265,8 @@ impl State {
         let QMode::Browse(purpose) = self.q_mode else { return };
         let text = self.ui().get_quick_text().to_string();
         let frag = text.rsplit('/').next().unwrap_or("").to_lowercase();
-        let ok_label = match purpose {
-            BrowsePurpose::OpenFolder => "OK",
-            BrowsePurpose::OpenFile => "OK",
-            BrowsePurpose::SaveAs(_) => "OK",
-        };
-        let mut rows = vec![QRow { label: ok_label.into(), desc: text.clone(), glyph: "", color: 0, key: "Enter", action: QAction::BrowseOk }];
+        // Like VS Code's simple file dialog: OK is a button next to the input, not a list row.
+        let mut rows = Vec::new();
         if self.q_browse_dir.len() > 1 && frag.is_empty() {
             rows.push(QRow::text("..", QAction::BrowseInto("..".into(), true)));
         }
@@ -296,14 +293,14 @@ impl State {
         }
         self.q_rows = rows;
         self.sync_quick();
-        // typing a fragment selects the first matching entry, like VS Code's simple file dialog
-        self.ui().set_quick_index(if !frag.is_empty() && self.q_rows.len() > 1 { 1 } else { 0 });
+        // typing a fragment selects the first match; otherwise nothing is selected and Enter accepts the typed path
+        self.ui().set_quick_index(if !frag.is_empty() && !self.q_rows.is_empty() { 0 } else { -1 });
     }
 
     pub fn quick_accept(&mut self, idx: i32) {
         let app = self.ui();
         let text = app.get_quick_text().to_string();
-        let row = self.q_rows.get(idx.max(0) as usize).cloned();
+        let row = usize::try_from(idx).ok().and_then(|i| self.q_rows.get(i)).cloned();
         let mode = std::mem::replace(&mut self.q_mode, QMode::Nav);
         match mode {
             QMode::Secret(mut tx) => {
@@ -347,6 +344,11 @@ impl State {
                         }
                     }
                     _ => {
+                        if purpose != BrowsePurpose::OpenFolder && text.ends_with('/') {
+                            // a folder path is not a file: stay in the dialog
+                            self.q_mode = QMode::Browse(purpose);
+                            return;
+                        }
                         self.close_quick();
                         let path = if text.len() > 1 { text.trim_end_matches('/').to_string() } else { text.clone() };
                         match purpose {
@@ -660,6 +662,7 @@ impl State {
         if self.dialog.is_some() {
             return false;
         }
+        let text: &str = &shortcut_key(text, ctrl, alt);
         let lower = text.to_lowercase();
         let k = lower.as_str();
         let app = self.ui();
@@ -669,6 +672,10 @@ impl State {
             }
             self.chord = false;
             app.set_status_message("".into());
+            // the second key of a chord may come without Ctrl ("Ctrl+K F"), so map jamo here too
+            let text: &str = &shortcut_key(text, true, false);
+            let lower = text.to_lowercase();
+            let k = lower.as_str();
             let cmd = match (ctrl, shift, alt, k) {
                 (true, false, false, "o") => Some("file.openFolder"),
                 (false, false, false, "f") => Some("file.closeFolder"),

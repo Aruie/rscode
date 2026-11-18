@@ -35,6 +35,46 @@ fn is_key(text: &str, k: Key) -> bool {
     text == SharedString::from(k).as_str()
 }
 
+/// With the Korean IME in Hangul mode, Ctrl/Alt shortcuts arrive as jamo ("ㄴ" for S).
+/// VS Code matches the physical key, so map 2-beolsik jamo back to the Latin letter on that key.
+pub(crate) fn shortcut_key(text: &str, ctrl: bool, alt: bool) -> std::borrow::Cow<'_, str> {
+    if !(ctrl || alt) {
+        return text.into();
+    }
+    let mut it = text.chars();
+    let (Some(c), None) = (it.next(), it.next()) else { return text.into() };
+    let latin = match c {
+        'ㅂ' | 'ㅃ' => 'q',
+        'ㅈ' | 'ㅉ' => 'w',
+        'ㄷ' | 'ㄸ' => 'e',
+        'ㄱ' | 'ㄲ' => 'r',
+        'ㅅ' | 'ㅆ' => 't',
+        'ㅛ' => 'y',
+        'ㅕ' => 'u',
+        'ㅑ' => 'i',
+        'ㅐ' | 'ㅒ' => 'o',
+        'ㅔ' | 'ㅖ' => 'p',
+        'ㅁ' => 'a',
+        'ㄴ' => 's',
+        'ㅇ' => 'd',
+        'ㄹ' => 'f',
+        'ㅎ' => 'g',
+        'ㅗ' => 'h',
+        'ㅓ' => 'j',
+        'ㅏ' => 'k',
+        'ㅣ' => 'l',
+        'ㅋ' => 'z',
+        'ㅌ' => 'x',
+        'ㅊ' => 'c',
+        'ㅍ' => 'v',
+        'ㅠ' => 'b',
+        'ㅜ' => 'n',
+        'ㅡ' => 'm',
+        _ => return text.into(),
+    };
+    latin.to_string().into()
+}
+
 const MAX_FILE: u64 = 20 * 1024 * 1024;
 const BINARY_MSG: &str = "The file is not displayed in the text editor because it is either binary or uses an unsupported text encoding.";
 const LARGE_MSG: &str = "The file is not displayed in the text editor because it is too large (over 20 MB).";
@@ -648,6 +688,7 @@ impl State {
             return false;
         }
         let sel = self.widget_sel();
+        let text: &str = &shortcut_key(text, ctrl, alt);
         let lower = text.to_lowercase();
         let k = lower.as_str();
         let d = &self.tabs[i].doc;
@@ -808,3 +849,18 @@ mod files;
 mod input;
 #[cfg(feature = "screenshot")]
 mod shot;
+
+
+#[cfg(test)]
+mod tests {
+    use super::shortcut_key;
+
+    #[test]
+    fn hangul_ime_shortcuts_map_to_latin_keys() {
+        assert_eq!(shortcut_key("ㄴ", true, false), "s");
+        assert_eq!(shortcut_key("ㅆ", true, false), "t");
+        assert_eq!(shortcut_key("ㅏ", true, false), "k");
+        assert_eq!(shortcut_key("ㄴ", false, false), "ㄴ");
+        assert_eq!(shortcut_key("s", true, false), "s");
+    }
+}

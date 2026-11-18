@@ -111,6 +111,7 @@ export component App inherits Window {
     in property <string> quick-placeholder;
     in property <string> quick-title;
     in property <bool> quick-password;
+    in property <bool> quick-ok;
     in property <[QuickItem]> quick-items;
     in-out property <int> quick-index;
     in property <int> quick-cursor-pos;
@@ -1414,8 +1415,11 @@ export component App inherits Window {
                         horizontal-alignment: center;
                         font-size: 12px;
                     }
+                    HorizontalLayout {
+                    spacing: 6px;
                     Rectangle {
                         height: 26px;
+                        horizontal-stretch: 1;
                         background: T.input-bg;
                         border-radius: 2px;
                         border-width: 1px;
@@ -1486,6 +1490,14 @@ export component App inherits Window {
                             color: T.fg-muted;
                             vertical-alignment: center;
                         }
+                    }
+
+                    if root.quick-ok: BlueButton {
+                        text: "OK";
+                        clicked => {
+                            root.quick-accept(-1);
+                        }
+                    }
                     }
 
                     ql-view := ListView {
