@@ -52,7 +52,7 @@ impl State {
                 detail: SharedString::new(),
                 glyph: r.glyph.into(),
                 glyph_color: lang::color(r.color),
-                keybinding: r.key.into(),
+                keybinding: r.key.as_ref().into(),
                 selectable: !matches!(r.action, QAction::None),
             })
             .collect();
@@ -162,7 +162,7 @@ impl State {
                         desc: rel,
                         glyph: l.glyph,
                         color: l.color,
-                        key: "",
+                        key: "".into(),
                         action: QAction::Tab(id),
                     });
                 }
@@ -184,7 +184,7 @@ impl State {
                     desc: dir.to_string(),
                     glyph: l.glyph,
                     color: l.color,
-                    key: "",
+                    key: "".into(),
                     action: QAction::Open(self.join(&root, f)),
                 });
             }
@@ -207,10 +207,21 @@ impl State {
         if !query.is_empty() {
             scored.sort_by(|a, b| b.0.cmp(&a.0));
         }
-        let mut rows: Vec<QRow> = scored
+        let mut all: Vec<(i32, QRow)> = scored
             .into_iter()
-            .map(|(_, c)| QRow { label: c.title.into(), desc: String::new(), glyph: "", color: 0, key: c.key, action: QAction::Cmd(c.id) })
+            .map(|(s, c)| (s, QRow { label: c.title.into(), desc: String::new(), glyph: "", color: 0, key: c.key.into(), action: QAction::Cmd(c.id) }))
             .collect();
+        for (ei, c) in self.ext_commands() {
+            if let Some(sc) = crate::fuzzy::score(query, &c.title) {
+                let mut r = QRow::text(c.title.clone(), QAction::ExtCmd(ei, c.id.clone()));
+                r.key = c.key.clone().into();
+                all.push((sc, r));
+            }
+        }
+        if !query.is_empty() {
+            all.sort_by(|a, b| b.0.cmp(&a.0));
+        }
+        let mut rows: Vec<QRow> = all.into_iter().map(|(_, r)| r).collect();
         if rows.is_empty() {
             rows.push(QRow::text("No matching commands", QAction::None));
         }
@@ -287,7 +298,7 @@ impl State {
                 desc: String::new(),
                 glyph: if *is_dir { "" } else { l.glyph },
                 color: l.color,
-                key: "",
+                key: "".into(),
                 action: QAction::BrowseInto(name.clone(), *is_dir),
             });
         }
@@ -422,6 +433,10 @@ impl State {
                         self.close_quick();
                         self.run_command(c);
                     }
+                    QAction::ExtCmd(ei, id) => {
+                        self.close_quick();
+                        self.run_ext_command(ei, &id);
+                    }
                     QAction::Open(p) => {
                         self.close_quick();
                         self.open_path(&p);
@@ -509,7 +524,10 @@ impl State {
             "view.search" => self.open_search_view(),
             "view.scm" => self.show_view("scm"),
             "view.run" => self.show_view("run"),
-            "view.extensions" => self.show_view("extensions"),
+            "view.extensions" => {
+                self.refresh_ext_rows();
+                self.show_view("extensions");
+            }
             "view.remote" => self.show_view("remote"),
             "view.zoomIn" => self.zoom(1.0),
             "view.zoomOut" => self.zoom(-1.0),
@@ -582,7 +600,7 @@ impl State {
                 if self.active.is_some() {
                     let rows = lang::all()
                         .enumerate()
-                        .map(|(i, l)| QRow { label: l.name.into(), desc: String::new(), glyph: l.glyph, color: l.color, key: "", action: QAction::Choice(i) })
+                        .map(|(i, l)| QRow { label: l.name.into(), desc: String::new(), glyph: l.glyph, color: l.color, key: "".into(), action: QAction::Choice(i) })
                         .collect();
                     self.pick(PickKind::Lang, "Select Language Mode", rows);
                 }
@@ -593,7 +611,7 @@ impl State {
                     .hosts
                     .iter()
                     .enumerate()
-                    .map(|(i, h)| QRow { label: h.alias.clone(), desc: h.detail(), glyph: "", color: 0, key: "", action: QAction::Host(i) })
+                    .map(|(i, h)| QRow { label: h.alias.clone(), desc: h.detail(), glyph: "", color: 0, key: "".into(), action: QAction::Host(i) })
                     .collect();
                 rows.push(QRow::text("+ Add New SSH Host...", QAction::Cmd("remote.openConfig")));
                 rows.push(QRow::text("Configure SSH Hosts...", QAction::Cmd("remote.openConfig")));
@@ -604,18 +622,18 @@ impl State {
             "remote.menu" => {
                 let rows = if self.remote.connected {
                     vec![
-                        QRow { label: "Open Folder...".into(), desc: "Remote-SSH".into(), glyph: "", color: 0, key: "", action: QAction::Cmd("file.openFolder") },
-                        QRow { label: "Close Remote Connection".into(), desc: String::new(), glyph: "", color: 0, key: "", action: QAction::Cmd("remote.close") },
+                        QRow { label: "Open Folder...".into(), desc: "Remote-SSH".into(), glyph: "", color: 0, key: "".into(), action: QAction::Cmd("file.openFolder") },
+                        QRow { label: "Close Remote Connection".into(), desc: String::new(), glyph: "", color: 0, key: "".into(), action: QAction::Cmd("remote.close") },
                     ]
                 } else {
                     vec![
-                        QRow { label: "Connect to Host...".into(), desc: "Remote-SSH".into(), glyph: "", color: 0, key: "", action: QAction::Cmd("remote.connect") },
+                        QRow { label: "Connect to Host...".into(), desc: "Remote-SSH".into(), glyph: "", color: 0, key: "".into(), action: QAction::Cmd("remote.connect") },
                         QRow {
                             label: "Open SSH Configuration File...".into(),
                             desc: "Remote-SSH".into(),
                             glyph: "",
                             color: 0,
-                            key: "",
+                            key: "".into(),
                             action: QAction::Cmd("remote.openConfig"),
                         },
                     ]
@@ -691,6 +709,7 @@ impl State {
             };
             match cmd {
                 Some(c) => self.run_command(c),
+                None if self.ext_key(true, k, ctrl, shift, alt) => {}
                 None => {
                     let shown = if text.chars().count() == 1 && !text.chars().next().unwrap().is_control() { text.to_uppercase() } else { "key".into() };
                     let msg = format!("The key combination (Ctrl+K, {}{shown}) is not a command.", if ctrl { "Ctrl+" } else { "" });
@@ -803,7 +822,7 @@ impl State {
                 }
                 return true;
             }
-            _ => return false,
+            _ => return self.ext_key(false, k, ctrl, shift, alt),
         };
         self.run_command(cmd);
         true
@@ -837,6 +856,9 @@ impl State {
             }
             _ => return,
         };
+        if v == "extensions" {
+            self.refresh_ext_rows();
+        }
         if self.sidebar && self.view == v {
             self.sidebar = false;
         } else {

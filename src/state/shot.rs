@@ -7,6 +7,22 @@ impl State {
         if scene == "welcome" {
             return;
         }
+        if scene == "extensions" || scene == "mdpreview" {
+            // enable the first extension (settings go to $XDG_CONFIG_HOME when set)
+            if !self.exts.is_empty() && !self.exts[0].is_loaded() {
+                self.ext_toggle(0);
+            }
+            if scene == "extensions" {
+                self.activity("extensions");
+                return;
+            }
+            let root = std::env::current_dir().unwrap();
+            self.open_local_folder_now(root.clone());
+            self.open_local(&root.join("ROADMAP.md"));
+            self.ext_key(true, "v", false, false, false);
+            self.panel_render_now();
+            return;
+        }
         if scene == "remote" {
             self.activity("remote");
             self.run_command("remote.connect");

@@ -11,14 +11,19 @@ grep-searcher = "0.1"
 ignore = "0.4"
 libloading = "0.9"
 png = { version = "0.18", optional = true }
+rcode-ext = { version = "0.1.0", path = "sdk" }
 rfd = { version = "0.18", default-features = false, features = ["xdg-portal"] }
 russh = { version = "0.65.1", default-features = false, features = ["ring", "rsa", "flate2"] }
 russh-sftp = "3.0.1"
+serde_json = "1"
 slint = { version = "1.18.1", default-features = false, features = ["std", "backend-winit", "renderer-software", "compat-1-2"] }
 tokio = { version = "1", features = ["rt", "net", "sync", "time", "macros", "io-util"] }
 tree-sitter = "0.27.2"
 tree-sitter-highlight = "0.27.2"
 tree-sitter-language = "0.1"
+
+[workspace]
+members = [".", "sdk", "extensions/markdown-preview"]
 
 [build-dependencies]
 slint-build = "1.18.1"

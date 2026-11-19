@@ -35,6 +35,31 @@ export struct HlLine {
     spans: [HlSpan],
 }
 
+export struct ExtRow {
+    kind: int, // 0 extension, 1 language grammar
+    name: string,
+    detail: string,
+    description: string,
+    enabled: bool,
+    error: string,
+}
+
+// One prebuilt widget filled by an extension. kind: 0 heading, 1 paragraph, 2 list item,
+// 3 code, 4 rule, 5 table row, 6 button, 7 label
+export struct ExtBlock {
+    kind: int,
+    text: styled-text,
+    plain: string,
+    level: int,
+    marker: string,
+    cells: [styled-text],
+    header: bool,
+    id: string,
+    quote: int,
+    indent: int,
+    code: [HlLine],
+}
+
 export struct TabItem {
     title: string,
     desc: string,
@@ -395,5 +420,169 @@ export component KeyCap inherits Rectangle {
         font-size: 11px;
         vertical-alignment: center;
         horizontal-alignment: center;
+    }
+}
+
+export component CheckBox inherits Rectangle {
+    in property <bool> checked;
+    callback toggled();
+    width: 18px;
+    height: 18px;
+    border-radius: 3px;
+    background: root.checked ? T.accent : T.input-bg;
+    border-width: 1px;
+    border-color: root.checked ? T.accent : ta.has-hover ? T.focus-border : T.input-border;
+    if root.checked: Icon {
+        d: "M5 12.5 L10 17 L19 7";
+        size: 16px;
+        stroke-w: 2px;
+        color: #ffffff;
+    }
+    ta := TouchArea {
+        clicked => {
+            root.toggled();
+        }
+    }
+}
+
+// Renders one ExtBlock. Markdown preview look follows VS Code's preview styles.
+export component ExtBlockView inherits VerticalLayout {
+    in property <ExtBlock> b;
+    in property <length> base: 14px;
+    callback link(string);
+    callback button(string);
+    private property <length> pad-left: root.b.indent * 22px + root.b.quote * 18px;
+    padding-top: root.b.kind == 0 ? (root.b.level <= 2 ? 18px : 12px) : root.b.kind == 5 ? 0px : 6px;
+    padding-bottom: root.b.kind == 0 && root.b.level <= 2 ? 6px : root.b.kind == 5 ? 0px : 6px;
+
+    HorizontalLayout {
+        spacing: 0;
+        // quote bars
+        for q in root.b.quote: Rectangle {
+            width: 18px;
+            Rectangle {
+                x: 0;
+                width: 4px;
+                background: #ffffff33;
+            }
+        }
+        Rectangle {
+            width: root.b.indent * 22px;
+        }
+
+        VerticalLayout {
+            spacing: 4px;
+            horizontal-stretch: 1;
+            if root.b.kind == 0: StyledText {
+                text: root.b.text;
+                default-color: T.fg-bright;
+                default-font-size: root.b.level == 1 ? root.base * 2 : root.b.level == 2 ? root.base * 1.5 : root.b.level == 3 ? root.base * 1.25 : root.base;
+                link-color: #4daafc;
+                link-clicked(u) => {
+                    root.link(u);
+                }
+            }
+            if root.b.kind == 0 && root.b.level <= 2: Rectangle {
+                height: 1px;
+                background: #ffffff2e;
+            }
+            if root.b.kind == 1: StyledText {
+                text: root.b.text;
+                default-color: T.fg;
+                default-font-size: root.base;
+                link-color: #4daafc;
+                link-clicked(u) => {
+                    root.link(u);
+                }
+            }
+            if root.b.kind == 2: HorizontalLayout {
+                spacing: 6px;
+                Text {
+                    width: 22px;
+                    text: root.b.marker;
+                    color: T.fg;
+                    font-size: root.base;
+                    horizontal-alignment: right;
+                }
+
+                StyledText {
+                    horizontal-stretch: 1;
+                    text: root.b.text;
+                    default-color: T.fg;
+                    default-font-size: root.base;
+                    link-color: #4daafc;
+                    link-clicked(u) => {
+                        root.link(u);
+                    }
+                }
+            }
+            if root.b.kind == 3: Rectangle {
+                background: #ffffff12;
+                border-radius: 3px;
+                clip: true;
+                VerticalLayout {
+                    padding: 12px;
+                    spacing: 0;
+                    for l in root.b.code: HorizontalLayout {
+                        spacing: 0;
+                        alignment: start;
+                        for sp in l.spans: Text {
+                            text: sp.text;
+                            color: sp.color;
+                            font-family: T.mono-font;
+                            font-size: root.base - 1px;
+                            wrap: no-wrap;
+                        }
+                        // keep empty lines one line tall
+                        if l.spans.length == 0: Text {
+                            text: " ";
+                            font-family: T.mono-font;
+                            font-size: root.base - 1px;
+                        }
+                    }
+                }
+            }
+            if root.b.kind == 4: Rectangle {
+                height: 2px;
+                background: #ffffff2e;
+            }
+            if root.b.kind == 5: HorizontalLayout {
+                spacing: 0;
+                for c in root.b.cells: Rectangle {
+                    horizontal-stretch: 1;
+                    background: root.b.header ? #ffffff0d : transparent;
+                    border-width: 1px;
+                    border-color: #ffffff2e;
+                    VerticalLayout {
+                        padding: 6px;
+                        padding-left: 10px;
+                        StyledText {
+                            text: c;
+                            default-color: T.fg;
+                            default-font-size: root.base;
+                            link-color: #4daafc;
+                            link-clicked(u) => {
+                                root.link(u);
+                            }
+                        }
+                    }
+                }
+            }
+            if root.b.kind == 6: HorizontalLayout {
+                alignment: start;
+                BlueButton {
+                    text: root.b.plain;
+                    clicked => {
+                        root.button(root.b.id);
+                    }
+                }
+            }
+            if root.b.kind == 7: Text {
+                text: root.b.plain;
+                color: T.fg;
+                font-size: root.base;
+                wrap: word-wrap;
+            }
+        }
     }
 }

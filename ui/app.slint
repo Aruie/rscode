@@ -2,11 +2,11 @@ import { ListView, ScrollView } from "std-widgets.slint";
 import { T } from "theme.slint";
 import { Icons, Icon, AppLogo } from "icons.slint";
 import {
-    TreeRow, TabItem, QuickItem, MenuItemData, HostRow, Crumb, Toast, HlSpan, HlLine, SearchRow,
+    TreeRow, TabItem, QuickItem, MenuItemData, HostRow, Crumb, Toast, HlSpan, HlLine, SearchRow, ExtRow, ExtBlock, CheckBox, ExtBlockView,
     ToolButton, ActivityItem, TreeRowView, EditorTab, StatusItem, MenuTitle, WinButton, BlueButton, KeyCap
 } from "widgets.slint";
 
-export { TreeRow, TabItem, QuickItem, MenuItemData, HostRow, Crumb, Toast, HlSpan, HlLine, SearchRow }
+export { TreeRow, TabItem, QuickItem, MenuItemData, HostRow, Crumb, Toast, HlSpan, HlLine, SearchRow, ExtRow, ExtBlock }
 
 export component App inherits Window {
     // ---------- window ----------
@@ -66,6 +66,19 @@ export component App inherits Window {
     callback search-row-clicked(int);
     callback search-action(string);
     callback search-submit();
+
+    // extensions view and extension panel (beside the editor)
+    in property <[ExtRow]> ext-rows;
+    in property <string> ext-dir;
+    callback ext-toggle(int);
+    in property <bool> panel-open;
+    in property <string> panel-title;
+    in property <[ExtBlock]> panel-blocks;
+    callback panel-close();
+    callback panel-link(string);
+    callback panel-button(string);
+    in property <bool> title-button-visible;
+    callback title-button-clicked();
 
     // CPU / memory of this process (title bar)
     in property <string> stats-label: "CPU 0.0%  ·  0 MB";
@@ -933,8 +946,105 @@ export component App inherits Window {
                             }
                         }
 
+                        // ---- extensions ----
+                        if root.active-view == "extensions": VerticalLayout {
+                            vertical-stretch: 1;
+                            ListView {
+                                for x[i] in root.ext-rows: Rectangle {
+                                    height: xl.preferred-height;
+                                    background: xta.has-hover ? T.hover : transparent;
+                                    xta := TouchArea {
+                                        clicked => {
+                                            root.ext-toggle(i);
+                                        }
+                                    }
+
+                                    xl := VerticalLayout {
+                                        // section headers
+                                        if i == 0 || (x.kind == 1 && root.ext-rows[i - 1].kind == 0): Rectangle {
+                                            height: 26px;
+                                            Text {
+                                                x: 12px;
+                                                text: x.kind == 0 ? "INSTALLED" : "LANGUAGES";
+                                                font-size: 11px;
+                                                font-weight: 700;
+                                                color: T.fg;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+                                        HorizontalLayout {
+                                            padding-left: 12px;
+                                            padding-right: 12px;
+                                            padding-top: 6px;
+                                            padding-bottom: 6px;
+                                            spacing: 10px;
+                                            Rectangle {
+                                                width: 36px;
+                                                height: 36px;
+                                                border-radius: 4px;
+                                                background: x.kind == 0 ? #0e639c : #3a3d41;
+                                                Text {
+                                                    text: x.kind == 0 ? "EXT" : "{ }";
+                                                    color: #ffffff;
+                                                    font-size: 11px;
+                                                    font-weight: 700;
+                                                    horizontal-alignment: center;
+                                                    vertical-alignment: center;
+                                                }
+                                            }
+
+                                            VerticalLayout {
+                                                horizontal-stretch: 1;
+                                                spacing: 2px;
+                                                HorizontalLayout {
+                                                    spacing: 8px;
+                                                    Text {
+                                                        text: x.name;
+                                                        color: T.fg-bright;
+                                                        font-weight: 600;
+                                                        overflow: elide;
+                                                    }
+
+                                                    Text {
+                                                        text: x.detail;
+                                                        color: T.fg-muted;
+                                                        font-size: 12px;
+                                                        overflow: elide;
+                                                        horizontal-stretch: 1;
+                                                    }
+                                                }
+
+                                                Text {
+                                                    text: x.error != "" ? x.error : x.description;
+                                                    color: x.error != "" ? T.error : T.fg-dim;
+                                                    font-size: 12px;
+                                                    wrap: word-wrap;
+                                                }
+                                            }
+
+                                            CheckBox {
+                                                y: 9px;
+                                                checked: x.enabled;
+                                                toggled => {
+                                                    root.ext-toggle(i);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if root.ext-rows.length == 0: Text {
+                                x: 20px;
+                                width: parent.width - 40px;
+                                text: "No extensions found. Put extension folders in " + root.ext-dir;
+                                color: T.fg-dim;
+                                wrap: word-wrap;
+                            }
+                        }
+
                         // ---- not yet implemented views ----
-                        if root.active-view != "explorer" && root.active-view != "remote" && root.active-view != "search": VerticalLayout {
+                        if root.active-view != "explorer" && root.active-view != "remote" && root.active-view != "search" && root.active-view != "extensions": VerticalLayout {
                             padding: 20px;
                             alignment: start;
                             Text {
@@ -963,7 +1073,21 @@ export component App inherits Window {
                                 background: T.border;
                             }
 
+                            if root.title-button-visible: Rectangle {
+                                x: parent.width - self.width;
+                                width: 36px;
+                                height: 34px;
+                                background: T.bg-side;
+                                ToolButton {
+                                    icon: Icons.open-preview;
+                                    clicked => {
+                                        root.title-button-clicked();
+                                    }
+                                }
+                            }
                             Flickable {
+                                width: parent.width - (root.title-button-visible ? 36px : 0px);
+                                x: 0;
                                 content-width: tabs-row.preferred-width;
                                 tabs-row := HorizontalLayout {
                                     alignment: start;
@@ -1438,6 +1562,87 @@ export component App inherits Window {
                                         clicked => {
                                             root.replace-all();
                                         }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // ---------- extension panel beside the editor ----------
+                if root.panel-open: Rectangle {
+                    horizontal-stretch: 1;
+                    background: T.bg-editor;
+                    Rectangle {
+                        x: 0;
+                        width: 1px;
+                        background: T.border;
+                    }
+
+                    VerticalLayout {
+                        Rectangle {
+                            height: 35px;
+                            background: T.bg-side;
+                            Rectangle {
+                                y: parent.height - 1px;
+                                height: 1px;
+                                background: T.border;
+                            }
+
+                            // looks like an active editor tab
+                            Rectangle {
+                                x: 1px;
+                                width: ptl.preferred-width;
+                                background: T.bg-editor;
+                                Rectangle {
+                                    y: 0;
+                                    height: 1px;
+                                    background: T.accent;
+                                }
+
+                                ptl := HorizontalLayout {
+                                    padding-left: 10px;
+                                    padding-right: 8px;
+                                    spacing: 6px;
+                                    Icon {
+                                        y: (35px - 14px) / 2;
+                                        d: Icons.open-preview;
+                                        size: 14px;
+                                        color: #519aba;
+                                    }
+
+                                    Text {
+                                        text: root.panel-title;
+                                        color: T.fg-bright;
+                                        vertical-alignment: center;
+                                    }
+
+                                    ToolButton {
+                                        y: (35px - 22px) / 2;
+                                        icon: Icons.close;
+                                        clicked => {
+                                            root.panel-close();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        ScrollView {
+                            vertical-stretch: 1;
+                            VerticalLayout {
+                                padding-left: 26px;
+                                padding-right: 26px;
+                                padding-top: 10px;
+                                padding-bottom: 40px;
+                                spacing: 0;
+                                alignment: start;
+                                for blk in root.panel-blocks: ExtBlockView {
+                                    b: blk;
+                                    link(u) => {
+                                        root.panel-link(u);
+                                    }
+                                    button(id) => {
+                                        root.panel-button(id);
                                     }
                                 }
                             }

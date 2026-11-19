@@ -143,18 +143,50 @@ pub fn registry() -> &'static Registry {
     })
 }
 
+static DISABLED: std::sync::RwLock<std::collections::BTreeSet<String>> = std::sync::RwLock::new(std::collections::BTreeSet::new());
+
+/// Grammars (by name) turned off in the Extensions view.
+pub fn set_disabled(names: std::collections::BTreeSet<String>) {
+    *DISABLED.write().unwrap() = names;
+}
+
+fn enabled(g: &Grammar) -> bool {
+    !DISABLED.read().unwrap().contains(&g.name)
+}
+
 impl Registry {
     pub fn by_file_name(&self, file_name: &str) -> Option<&Grammar> {
         let lower = file_name.to_ascii_lowercase();
         if let Some(g) = self.grammars.iter().find(|g| g.file_names.contains(&lower)) {
-            return Some(g);
+            return Some(g).filter(|g| enabled(g));
         }
         let ext = lower.rsplit_once('.')?.1;
-        self.grammars.iter().find(|g| g.extensions.iter().any(|e| e == ext))
+        self.grammars.iter().find(|g| g.extensions.iter().any(|e| e == ext)).filter(|g| enabled(g))
     }
 
     pub fn by_lang_name(&self, name: &str) -> Option<&Grammar> {
-        self.grammars.iter().find(|g| g.name == name || g.aliases.iter().any(|a| a == name))
+        self.grammars.iter().find(|g| g.name == name || g.aliases.iter().any(|a| a == name)).filter(|g| enabled(g))
+    }
+
+    /// A code fence hint like "python", "py", "rust", "sh".
+    pub fn by_hint(&self, hint: &str) -> Option<&Grammar> {
+        let h = hint.trim().to_ascii_lowercase();
+        if h.is_empty() {
+            return None;
+        }
+        let alias = match h.as_str() {
+            "shell" | "console" => "sh",
+            "c++" => "cpp",
+            "js" | "jsx" | "node" => "js",
+            "golang" => "go",
+            "yml" => "yaml",
+            "csharp" | "c#" => "cs",
+            other => other,
+        };
+        self.grammars
+            .iter()
+            .find(|g| g.name.to_ascii_lowercase() == h || g.extensions.iter().any(|e| e == alias))
+            .filter(|g| enabled(g))
     }
 }
 

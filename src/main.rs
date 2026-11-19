@@ -3,6 +3,7 @@
 
 mod commands;
 mod doc;
+mod ext;
 mod fuzzy;
 mod lang;
 mod remote;
@@ -203,6 +204,23 @@ pub(crate) fn wire(app: &App) {
     });
     app.on_search_submit(|| {
         with_state(|s| s.run_search());
+    });
+
+    // ---- extensions ----
+    app.on_ext_toggle(|i| {
+        with_state(|s| s.ext_toggle(i as usize));
+    });
+    app.on_panel_close(|| {
+        with_state(|s| s.panel_close());
+    });
+    app.on_panel_link(|u| {
+        with_state(|s| s.panel_link(&u));
+    });
+    app.on_panel_button(|t| {
+        with_state(|s| s.panel_button(&t));
+    });
+    app.on_title_button_clicked(|| {
+        with_state(|s| s.title_button_clicked());
     });
 
     // ---- CPU / memory meter ----

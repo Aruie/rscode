@@ -1,0 +1,12 @@
+[package]
+name = "rcode-markdown-preview"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "markdown_preview"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+rcode-ext = { path = "../../sdk" }
+pulldown-cmark = { version = "0.13", default-features = false }

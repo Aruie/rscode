@@ -1,0 +1,9 @@
+[package]
+name = "rcode-ext"
+version = "0.1.0"
+edition = "2024"
+description = "Protocol types and export macro for rcode extensions"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

@@ -1,0 +1,5 @@
+name = Markdown Preview
+description = Preview Markdown files beside the editor (Ctrl+K V).
+version = 0.1.0
+publisher = rcode
+library = markdown_preview

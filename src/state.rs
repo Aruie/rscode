@@ -7,7 +7,7 @@ use crate::remote::{self, Event, Req};
 use crate::ssh_config::{self, HostEntry};
 use crate::text_ops::{self as ops, Edit, Sel};
 use crate::tree::Tree;
-use crate::{App, Crumb, HlLine, HlSpan, HostRow, MenuItemData, QuickItem, SearchRow, TabItem, Toast, TreeRow};
+use crate::{App, Crumb, ExtBlock, ExtRow, HlLine, HlSpan, HostRow, MenuItemData, QuickItem, SearchRow, TabItem, Toast, TreeRow};
 use slint::platform::Key;
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel, Weak};
 use std::cell::RefCell;
@@ -138,6 +138,7 @@ enum QMode {
 #[derive(Clone)]
 enum QAction {
     None,
+    ExtCmd(usize, String),
     Open(String),
     Tab(u64),
     Cmd(&'static str),
@@ -154,13 +155,13 @@ struct QRow {
     desc: String,
     glyph: &'static str,
     color: u32,
-    key: &'static str,
+    key: std::borrow::Cow<'static, str>,
     action: QAction,
 }
 
 impl QRow {
     fn text(label: impl Into<String>, action: QAction) -> Self {
-        QRow { label: label.into(), desc: String::new(), glyph: "", color: 0, key: "", action }
+        QRow { label: label.into(), desc: String::new(), glyph: "", color: 0, key: "".into(), action }
     }
 }
 
@@ -204,6 +205,8 @@ struct Models {
     hosts: Rc<VecModel<HostRow>>,
     popup: Rc<VecModel<MenuItemData>>,
     search: Rc<VecModel<SearchRow>>,
+    ext_rows: Rc<VecModel<ExtRow>>,
+    panel_blocks: Rc<VecModel<ExtBlock>>,
 }
 
 pub struct State {
@@ -250,6 +253,10 @@ pub struct State {
     pending_reveal: Option<(Where, (usize, usize, usize))>,
     stats: crate::stats::Stats,
     stats_timer: slint::Timer,
+    exts: Vec<crate::ext::Ext>,
+    settings: crate::ext::Settings,
+    panel: Option<ext::Panel>,
+    panel_timer: slint::Timer,
 }
 
 fn rows_model<T: Clone + 'static>(m: &Rc<VecModel<T>>) -> ModelRc<T> {
@@ -267,6 +274,8 @@ impl State {
             hosts: Rc::new(VecModel::default()),
             popup: Rc::new(VecModel::default()),
             search: Rc::new(VecModel::default()),
+            ext_rows: Rc::new(VecModel::default()),
+            panel_blocks: Rc::new(VecModel::default()),
         };
         app.set_tree_rows(rows_model(&m.tree));
         app.set_tabs(rows_model(&m.tabs));
@@ -276,6 +285,8 @@ impl State {
         app.set_hosts(rows_model(&m.hosts));
         app.set_popup_items(rows_model(&m.popup));
         app.set_search_rows(rows_model(&m.search));
+        app.set_ext_rows(rows_model(&m.ext_rows));
+        app.set_panel_blocks(rows_model(&m.panel_blocks));
         let hl_lines = Rc::new(VecModel::default());
         app.set_hl_lines(rows_model(&hl_lines));
         let mut s = State {
@@ -321,8 +332,13 @@ impl State {
             pending_reveal: None,
             stats: crate::stats::Stats::new(),
             stats_timer: slint::Timer::default(),
+            exts: Vec::new(),
+            settings: Default::default(),
+            panel: None,
+            panel_timer: slint::Timer::default(),
         };
         s.reload_hosts();
+        s.init_extensions();
         s.start_stats();
         s.refresh_title();
         s.refresh_status();
@@ -605,6 +621,7 @@ impl State {
             app.set_editor_text("".into());
             self.refresh_title();
             app.invoke_focus_root();
+            self.refresh_title_button();
             return;
         };
         let t = &self.tabs[i];
@@ -623,6 +640,7 @@ impl State {
         self.refresh_title();
         self.refresh_visible();
         self.schedule_highlight();
+        self.panel_follow();
         if self.find.open {
             self.find_count();
         }
@@ -643,6 +661,7 @@ impl State {
         self.refresh_status();
         self.refresh_visible();
         self.schedule_highlight();
+        self.panel_follow();
         let was_dirty: Vec<bool> = self.m.tabs.iter().map(|t| t.dirty).collect();
         let now_dirty: Vec<bool> = self.tabs.iter().map(|t| t.doc.is_dirty()).collect();
         if was_dirty != now_dirty {
@@ -938,6 +957,7 @@ impl State {
 }
 
 
+mod ext;
 mod files;
 mod input;
 mod search;
