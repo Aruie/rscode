@@ -34,8 +34,8 @@ impl rcode_ext::Extension for MarkdownPreview {
 
     fn command(&mut self, id: &str, _doc: Option<&Doc>) -> Vec<Action> {
         match id {
-            "openSide" => vec![Action::OpenPanel { panel: PANEL.into() }],
-            "toggle" => vec![Action::OpenPanel { panel: PANEL.into() }],
+            "openSide" => vec![Action::OpenPanel { panel: PANEL.into(), beside: true }],
+            "toggle" => vec![Action::OpenPanel { panel: PANEL.into(), beside: false }],
             _ => Vec::new(),
         }
     }

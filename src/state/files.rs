@@ -14,43 +14,65 @@ impl State {
     // ------------------------------------------------------------------ tabs
 
     fn find_tab(&self, loc: &Where) -> Option<usize> {
-        self.tabs.iter().position(|t| &t.doc.loc == loc)
+        // a file has one editor; prefer the current group if (ever) open in both
+        self.tabs
+            .iter()
+            .position(|t| &t.doc.loc == loc && t.group == self.cur)
+            .or_else(|| self.tabs.iter().position(|t| &t.doc.loc == loc))
     }
 
     fn add_tab(&mut self, doc: Doc) -> usize {
         self.save_view_state();
         let id = self.next_id;
         self.next_id += 1;
+        let g = self.cur;
         let insert_at = self.active.map(|a| a + 1).unwrap_or(self.tabs.len());
-        self.tabs.insert(insert_at, Tab { id, doc, scroll: (0.0, 0.0), close_after_save: false });
+        self.tabs.insert(insert_at, Tab { id, doc, scroll: (0.0, 0.0), close_after_save: false, group: g, preview: None });
         self.activate(insert_at);
         insert_at
     }
 
+    /// Show tab `idx` in its group and make that group current.
     pub fn activate(&mut self, idx: usize) {
         if idx >= self.tabs.len() {
             return;
         }
+        let g = self.tabs[idx].group;
         if self.active != Some(idx) {
             self.save_view_state();
         }
-        self.active = Some(idx);
+        self.cur = g;
         let id = self.tabs[idx].id;
+        self.groups[g].active = Some(id);
         self.mru.retain(|&m| m != id);
         self.mru.insert(0, id);
         self.load_editor();
     }
 
-    pub fn tab_clicked(&mut self, idx: usize) {
+    /// Display index `i` within group `g` -> index in `tabs`.
+    fn tab_at(&self, g: usize, i: usize) -> Option<usize> {
+        self.group_tabs(g).get(i).copied()
+    }
+
+    pub fn tab_clicked(&mut self, g: usize, i: usize) {
+        let Some(idx) = self.tab_at(g, i) else { return };
         self.activate(idx);
-        self.ui().invoke_focus_editor();
+        if self.tabs[idx].preview.is_none() {
+            self.focus_ed();
+        }
+    }
+
+    pub fn tab_close_clicked(&mut self, g: usize, i: usize) {
+        if let Some(idx) = self.tab_at(g, i) {
+            self.request_close_tab(idx);
+        }
     }
 
     pub fn new_untitled(&mut self) {
         self.untitled += 1;
         let doc = Doc::new(Where::Untitled(self.untitled), String::new());
         self.add_tab(doc);
-        self.ui().invoke_focus_editor();
+        self.focus_ed();
     }
 
     pub fn request_close_tab(&mut self, idx: usize) {
@@ -77,28 +99,61 @@ impl State {
             self.save_view_state();
         }
         let t = self.tabs.remove(idx);
-        if !matches!(t.doc.loc, Where::Untitled(_)) {
+        let g = t.group;
+        if !matches!(t.doc.loc, Where::Untitled(_) | Where::Preview(_)) {
             self.closed.retain(|l| l != &t.doc.loc);
             self.closed.push(t.doc.loc.clone());
         }
         self.mru.retain(|&m| m != t.id);
-        if self.tabs.is_empty() {
-            self.active = None;
-        } else {
-            // like VS Code: go to the most recently used remaining tab
-            let next = self.mru.first().and_then(|&id| self.tab_index(id)).unwrap_or(idx.min(self.tabs.len() - 1));
-            self.active = Some(next);
+        if self.groups[g].active == Some(t.id) {
+            // like VS Code: go to the most recently used remaining tab of the same group
+            let rest = self.group_tabs(g);
+            let next = self
+                .mru
+                .iter()
+                .filter_map(|&id| self.tab_index(id))
+                .find(|i| rest.contains(i))
+                .or_else(|| rest.iter().copied().find(|&i| i >= idx).or(rest.last().copied()));
+            self.groups[g].active = next.map(|i| self.tabs[i].id);
         }
+        let emptied = self.group_tabs(g).is_empty();
+        if emptied && self.split {
+            self.close_group(g);
+        } else {
+            self.cur = if self.groups[self.cur].active.is_none() && self.split { 1 - self.cur } else { self.cur };
+        }
+        self.sync_active();
+        self.load_group(1 - self.cur);
         self.load_editor();
         if self.active.is_some() {
-            self.ui().invoke_focus_editor();
+            self.focus_ed();
         }
+    }
+
+    /// Remove an empty group: the right group's tabs (if any) move to the left one.
+    fn close_group(&mut self, g: usize) {
+        if g == 0 {
+            for t in &mut self.tabs {
+                t.group = 0;
+            }
+            self.groups.swap(0, 1);
+        }
+        self.groups[1].active = None;
+        self.split = false;
+        self.cur = 0;
+        self.ui().invoke_set_text(1, "".into());
+        self.push_group(1);
     }
 
     pub fn close_all_tabs(&mut self) {
         self.tabs.clear();
         self.active = None;
         self.mru.clear();
+        self.groups[0].active = None;
+        self.groups[1].active = None;
+        self.split = false;
+        self.cur = 0;
+        self.load_group(1);
         self.load_editor();
     }
 
@@ -107,30 +162,78 @@ impl State {
             match loc {
                 Where::Local(p) => self.open_local(&p),
                 Where::Remote(p) => self.open_remote(p),
-                Where::Untitled(_) => {}
+                Where::Untitled(_) | Where::Preview(_) => {}
             }
         }
     }
 
     pub fn cycle_tab(&mut self, delta: isize) {
-        let n = self.tabs.len();
+        let tabs = self.group_tabs(self.cur);
+        let n = tabs.len();
         if n < 2 {
             return;
         }
-        let cur = self.active.unwrap_or(0) as isize;
-        self.activate(((cur + delta).rem_euclid(n as isize)) as usize);
-        self.ui().invoke_focus_editor();
+        let pos = self.active.and_then(|a| tabs.iter().position(|&i| i == a)).unwrap_or(0) as isize;
+        self.activate(tabs[((pos + delta).rem_euclid(n as isize)) as usize]);
+        self.focus_ed();
     }
 
-    /// Ctrl+Tab: previous editor in most-recently-used order.
+    /// Ctrl+Tab: previous editor of the current group in most-recently-used order.
     pub fn mru_switch(&mut self, back: bool) {
-        if self.mru.len() < 2 {
+        let g = self.cur;
+        let ids: Vec<u64> = self.mru.iter().copied().filter(|&id| self.tab_index(id).is_some_and(|i| self.tabs[i].group == g)).collect();
+        if ids.len() < 2 {
             return;
         }
-        let id = if back { *self.mru.last().unwrap() } else { self.mru[1] };
+        let id = if back { *ids.last().unwrap() } else { ids[1] };
         if let Some(i) = self.tab_index(id) {
             self.activate(i);
-            self.ui().invoke_focus_editor();
+            self.focus_ed();
+        }
+    }
+
+    /// Ctrl+\ and Ctrl+Alt+Left/Right: move the active editor to the other group (split if needed).
+    pub fn move_to_other_group(&mut self, to: Option<usize>) {
+        let Some(i) = self.active else { return };
+        let target = to.unwrap_or(1 - self.cur);
+        if target == self.cur {
+            return;
+        }
+        if target == 1 && !self.split {
+            if self.group_tabs(0).len() < 2 {
+                return; // VS Code would duplicate the editor; one editor per file here
+            }
+            self.split = true;
+        }
+        self.save_view_state();
+        let from = self.cur;
+        let id = self.tabs[i].id;
+        // the source group shows its next tab
+        let rest: Vec<usize> = self.group_tabs(from).into_iter().filter(|&x| x != i).collect();
+        let next = self.mru.iter().filter_map(|&m| self.tab_index(m)).find(|x| rest.contains(x)).or(rest.first().copied());
+        self.groups[from].active = next.map(|x| self.tabs[x].id);
+        self.tabs[i].group = target;
+        self.groups[target].active = Some(id);
+        if self.group_tabs(from).is_empty() {
+            self.close_group(from);
+        } else {
+            self.cur = target;
+        }
+        self.sync_active();
+        self.load_group(1 - self.cur);
+        self.load_editor();
+        self.focus_ed();
+    }
+
+    /// Ctrl+1 / Ctrl+2
+    pub fn focus_group(&mut self, g: usize) {
+        if g == 1 && !self.split {
+            self.move_to_other_group(Some(1));
+            return;
+        }
+        self.use_group(g);
+        if self.active.is_some() {
+            self.focus_ed();
         }
     }
 
@@ -197,7 +300,7 @@ impl State {
         }
         if self.active == Some(i) {
             self.load_editor();
-            self.ui().invoke_focus_editor();
+            self.focus_ed();
             self.apply_reveal();
         } else {
             self.refresh_tabs();
@@ -224,7 +327,7 @@ impl State {
                     self.load_editor();
                 }
             }
-            Where::Untitled(_) => {}
+            Where::Untitled(_) | Where::Preview(_) => {}
         }
     }
 
@@ -240,6 +343,7 @@ impl State {
             return true;
         }
         match t.doc.loc.clone() {
+            Where::Preview(_) => true,
             Where::Untitled(_) => {
                 let id = t.id;
                 self.save_as(id);
@@ -419,7 +523,7 @@ impl State {
             }
         }
         if self.active.is_some() {
-            app.invoke_focus_editor();
+            self.focus_ed();
         } else {
             app.invoke_focus_root();
         }
@@ -533,7 +637,7 @@ impl State {
                 let _ = slint::invoke_from_event_loop(move || {
                     with_state(|s| {
                         s.open_local(&p);
-                        s.ui().invoke_focus_editor();
+                        s.focus_ed();
                     });
                 });
             }
@@ -678,7 +782,7 @@ impl State {
                 let p = node.path.clone();
                 self.open_path(&p);
                 if is_key(text, Key::Return) {
-                    self.ui().invoke_focus_editor();
+                    self.focus_ed();
                 }
             }
             return true;
@@ -781,7 +885,7 @@ impl State {
                 self.expand_and_refresh(&parent);
                 if op == "create-file" {
                     self.open_path(&path);
-                    self.ui().invoke_focus_editor();
+                    self.focus_ed();
                 }
             }
             "remove" => {
@@ -1027,7 +1131,7 @@ impl State {
             let _ = std::fs::write(&p, b"# Read more about SSH config files: https://linux.die.net/man/5/ssh_config\nHost alias\n    HostName hostname\n    User user\n");
         }
         self.open_local(&p);
-        self.ui().invoke_focus_editor();
+        self.focus_ed();
     }
 
     pub fn close_remote(&mut self) {

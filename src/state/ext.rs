@@ -4,13 +4,12 @@ use super::*;
 use crate::{ExtBlock, ExtRow};
 use rcode_ext::{Action, CommandSpec, Doc as ExtDoc, Kind, Request, Widget};
 
-pub(crate) struct Panel {
-    ext: usize,
-    id: String,
-    title: String,
-    langs: Vec<String>,
-    /// tab whose document is shown
-    source: Option<u64>,
+/// What a preview tab shows: an extension panel rendered for a source document.
+#[derive(Clone)]
+pub(crate) struct PreviewOf {
+    pub ext: usize,
+    pub panel: String,
+    pub source: Where,
 }
 
 impl State {
@@ -66,8 +65,11 @@ impl State {
             let id = x.id.clone();
             if self.settings.enabled_extensions.remove(&id) {
                 x.deactivate();
-                if self.panel.as_ref().is_some_and(|p| p.ext == idx) {
-                    self.panel_close();
+                let ids: Vec<u64> = self.tabs.iter().filter(|t| t.preview.as_ref().is_some_and(|p| p.ext == idx)).map(|t| t.id).collect();
+                for id in ids {
+                    if let Some(i) = self.tab_index(id) {
+                        self.close_tab(i);
+                    }
                 }
             } else {
                 match x.activate() {
@@ -92,7 +94,8 @@ impl State {
                     t.doc.detect_grammar();
                 }
             }
-            self.refresh_visible();
+            self.refresh_visible(0);
+            self.refresh_visible(1);
             self.schedule_highlight();
             self.refresh_status();
         }
@@ -100,7 +103,8 @@ impl State {
             self.toast(1, format!("Could not save settings: {e}"));
         }
         self.refresh_ext_rows();
-        self.refresh_title_button();
+        self.push_group(0);
+        self.push_group(1);
     }
 
     /// Commands of all active extensions.
@@ -114,12 +118,13 @@ impl State {
     }
 
     fn active_ext_doc(&self) -> Option<ExtDoc> {
-        let t = self.active_tab().filter(|t| t.doc.message.is_empty())?;
+        let t = self.active_tab().filter(|t| t.doc.message.is_empty() && t.preview.is_none())?;
         Some(ExtDoc { path: t.doc.loc.path_string(), lang: t.doc.lang_name().to_string(), text: t.doc.text.clone() })
     }
 
-    fn doc_of(&self, tab: u64) -> Option<ExtDoc> {
-        let t = &self.tabs[self.tab_index(tab)?];
+    /// The open document at `loc` (any group).
+    fn doc_at(&self, loc: &Where) -> Option<ExtDoc> {
+        let t = self.tabs.iter().find(|t| &t.doc.loc == loc && t.preview.is_none() && t.doc.message.is_empty())?;
         Some(ExtDoc { path: t.doc.loc.path_string(), lang: t.doc.lang_name().to_string(), text: t.doc.text.clone() })
     }
 
@@ -137,10 +142,18 @@ impl State {
     fn ext_actions(&mut self, ext: usize, actions: Vec<Action>) {
         for a in actions {
             match a {
-                Action::OpenPanel { panel } => self.panel_open(ext, &panel),
+                Action::OpenPanel { panel, beside } => self.open_preview(ext, &panel, beside),
                 Action::ClosePanel { panel } => {
-                    if self.panel.as_ref().is_some_and(|p| p.ext == ext && p.id == panel) {
-                        self.panel_close();
+                    let ids: Vec<u64> = self
+                        .tabs
+                        .iter()
+                        .filter(|t| t.preview.as_ref().is_some_and(|p| p.ext == ext && p.panel == panel))
+                        .map(|t| t.id)
+                        .collect();
+                    for id in ids {
+                        if let Some(i) = self.tab_index(id) {
+                            self.close_tab(i);
+                        }
                     }
                 }
                 Action::OpenUrl { url } => open_url(&url),
@@ -175,81 +188,92 @@ impl State {
         }
     }
 
-    pub(super) fn refresh_title_button(&self) {
-        let lang = self.active_tab().filter(|t| t.doc.message.is_empty()).map(|t| t.doc.lang_name().to_string());
-        let show = lang.is_some_and(|l| self.ext_commands().iter().any(|(_, c)| c.editor_title_button && c.languages.contains(&l)));
-        self.ui().set_title_button_visible(show);
+    /// Whether group `g`'s active text tab gets the editor title button (e.g. Open Preview to the Side).
+    pub(super) fn title_button_for(&self, g: usize) -> bool {
+        let Some(t) = self.active_in(g).map(|i| &self.tabs[i]).filter(|t| t.preview.is_none() && t.doc.message.is_empty()) else {
+            return false;
+        };
+        let l = t.doc.lang_name().to_string();
+        self.ext_commands().iter().any(|(_, c)| c.editor_title_button && c.languages.contains(&l))
     }
 
-    pub fn title_button_clicked(&mut self) {
+    pub fn title_button_clicked(&mut self, g: usize) {
+        self.use_group(g);
         let lang = self.active_tab().map(|t| t.doc.lang_name().to_string()).unwrap_or_default();
         if let Some((ei, c)) = self.ext_commands().into_iter().find(|(_, c)| c.editor_title_button && c.languages.contains(&lang)) {
             self.run_ext_command(ei, &c.id);
         }
     }
 
-    // ------------------------------------------------------------------ panel
+    // ------------------------------------------------------------------ preview tabs
 
-    fn panel_open(&mut self, ext: usize, id: &str) {
-        let Some(spec) = self.exts.get(ext).and_then(|x| x.contributes.panels.iter().find(|p| p.id == id)).cloned() else { return };
-        let source = self
+    /// Open (or reveal) a preview tab of the active document, in this group or the one beside it.
+    fn open_preview(&mut self, ext: usize, panel: &str, beside: bool) {
+        let Some(spec) = self.exts.get(ext).and_then(|x| x.contributes.panels.iter().find(|p| p.id == panel)).cloned() else { return };
+        let Some(src) = self
             .active_tab()
+            .filter(|t| t.preview.is_none() && t.doc.message.is_empty())
             .filter(|t| spec.languages.is_empty() || spec.languages.iter().any(|l| l == t.doc.lang_name()))
-            .map(|t| t.id);
-        self.panel = Some(Panel { ext, id: spec.id, title: spec.title, langs: spec.languages, source });
-        self.ui().set_panel_open(true);
-        self.panel_render();
-        self.ui().invoke_focus_editor();
+        else {
+            return;
+        };
+        let source = src.doc.loc.clone();
+        let target = if beside {
+            if !self.split {
+                self.split = true;
+            }
+            1 - self.cur
+        } else {
+            self.cur
+        };
+        let loc = Where::Preview(source.path_string());
+        if let Some(i) = self.tabs.iter().position(|t| t.doc.loc == loc && t.group == target) {
+            let id = self.tabs[i].id;
+            self.groups[target].active = Some(id);
+        } else {
+            let id = self.next_id;
+            self.next_id += 1;
+            let mut doc = Doc::placeholder(loc, "");
+            doc.message.clear();
+            let pos = self.active_in(target).map(|i| i + 1).unwrap_or(self.tabs.len());
+            self.tabs.insert(pos, Tab { id, doc, scroll: (0.0, 0.0), close_after_save: false, group: target, preview: Some(PreviewOf { ext, panel: spec.id, source }) });
+            self.groups[target].active = Some(id);
+        }
+        self.sync_active();
+        self.load_group(target);
+        if target == self.cur {
+            self.load_editor();
+        } else {
+            // like VS Code's "Open Preview to the Side": keep the keyboard in the source editor
+            self.focus_ed();
+        }
     }
 
-    pub fn panel_close(&mut self) {
-        self.panel = None;
-        self.panel_timer.stop();
-        let app = self.ui();
-        app.set_panel_open(false);
-        self.m.panel_blocks.set_vec(Vec::new());
-    }
-
-    /// Called after a tab switch or an edit: follow the active document and re-render soon.
-    pub(super) fn panel_follow(&mut self) {
-        self.refresh_title_button();
-        let Some(p) = &self.panel else { return };
-        let Some(t) = self.active_tab() else { return };
-        let matches = p.langs.is_empty() || p.langs.iter().any(|l| l == t.doc.lang_name());
-        if !matches || !t.doc.message.is_empty() {
-            return; // keep showing the last document, like VS Code
+    /// Re-render previews soon (after an edit or a tab switch).
+    pub(super) fn schedule_previews(&mut self) {
+        if !(0..2).any(|g| self.active_in(g).is_some_and(|i| self.tabs[i].preview.is_some())) {
+            return;
         }
-        let id = t.id;
-        if let Some(p) = &mut self.panel {
-            p.source = Some(id);
-        }
-        self.panel_timer.start(slint::TimerMode::SingleShot, Duration::from_millis(120), || {
-            with_state(|s| s.panel_render());
+        self.preview_timer.start(slint::TimerMode::SingleShot, Duration::from_millis(150), || {
+            with_state(|s| {
+                s.render_preview(0);
+                s.render_preview(1);
+            });
         });
     }
 
-    #[cfg(feature = "screenshot")]
-    pub(super) fn panel_render_now(&mut self) {
-        self.panel_timer.stop();
-        self.panel_render();
-    }
-
-    fn panel_render(&mut self) {
-        let Some(p) = &self.panel else { return };
-        let (ext, id, title) = (p.ext, p.id.clone(), p.title.clone());
-        let Some(doc) = p.source.and_then(|t| self.doc_of(t)) else {
-            self.ui().set_panel_title(title.into());
-            self.m.panel_blocks.set_vec(Vec::new());
-            return;
-        };
-        let name = doc.path.rsplit(['/', '\\']).next().unwrap_or("").to_string();
-        self.ui().set_panel_title(format!("{title} {name}").into());
-        let Some(x) = self.exts.get(ext) else { return };
-        match x.call(&Request::Render { panel: id, doc }) {
+    /// Fill group `g`'s preview from its source document.
+    pub(super) fn render_preview(&mut self, g: usize) {
+        let Some(i) = self.active_in(g) else { return };
+        let Some(p) = self.tabs[i].preview.clone() else { return };
+        // the source closed: keep the last rendering
+        let Some(doc) = self.doc_at(&p.source) else { return };
+        let Some(x) = self.exts.get(p.ext) else { return };
+        match x.call(&Request::Render { panel: p.panel, doc }) {
             Ok(r) => {
                 let blocks: Vec<ExtBlock> = r.widgets.unwrap_or_default().iter().map(to_block).collect();
-                self.m.panel_blocks.set_vec(blocks);
-                self.ext_actions(ext, r.actions);
+                self.groups[g].blocks_m.set_vec(blocks);
+                self.ext_actions(p.ext, r.actions);
             }
             Err(e) => {
                 let n = x.name.clone();
@@ -258,7 +282,7 @@ impl State {
         }
     }
 
-    pub fn panel_link(&mut self, url: &str) {
+    pub fn panel_link(&mut self, g: usize, url: &str) {
         let url = url.trim();
         if url.starts_with("http://") || url.starts_with("https://") || url.starts_with("mailto:") {
             open_url(url);
@@ -267,23 +291,26 @@ impl State {
         if url.starts_with('#') || url.is_empty() {
             return;
         }
-        let Some(src) = self.panel.as_ref().and_then(|p| p.source).and_then(|t| self.doc_of(t)) else { return };
+        let Some(src) = self.active_in(g).and_then(|i| self.tabs[i].preview.clone()).map(|p| p.source.path_string()) else { return };
         let rel = url.split('#').next().unwrap_or("").replace("%20", " ");
         if rel.is_empty() {
             return;
         }
-        let dir = self.parent_of(&src.path);
+        let dir = self.parent_of(&src);
         let path = if rel.starts_with('/') { rel } else { self.join(&dir, &rel) };
+        // VS Code opens links from a preview in the other group (where the source usually is)
+        if self.split {
+            self.use_group(1 - g);
+        }
         self.open_path(&path);
     }
 
-    pub fn panel_button(&mut self, target: &str) {
-        let Some(p) = &self.panel else { return };
-        let (ext, id) = (p.ext, p.id.clone());
-        let doc = p.source.and_then(|t| self.doc_of(t));
-        let Some(x) = self.exts.get(ext) else { return };
-        match x.call(&Request::Click { panel: id, target: target.to_string(), doc }) {
-            Ok(r) => self.ext_actions(ext, r.actions),
+    pub fn panel_button(&mut self, g: usize, target: &str) {
+        let Some(p) = self.active_in(g).and_then(|i| self.tabs[i].preview.clone()) else { return };
+        let doc = self.doc_at(&p.source);
+        let Some(x) = self.exts.get(p.ext) else { return };
+        match x.call(&Request::Click { panel: p.panel, target: target.to_string(), doc }) {
+            Ok(r) => self.ext_actions(p.ext, r.actions),
             Err(e) => {
                 let n = x.name.clone();
                 self.toast(2, format!("{n}: {e}"));

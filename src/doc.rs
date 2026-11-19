@@ -12,6 +12,8 @@ pub enum Where {
     Local(std::path::PathBuf),
     Remote(String),
     Untitled(usize),
+    /// A preview tab of the document at this path.
+    Preview(String),
 }
 
 impl Where {
@@ -20,6 +22,7 @@ impl Where {
             Where::Local(p) => p.to_string_lossy().into_owned(),
             Where::Remote(p) => p.clone(),
             Where::Untitled(n) => format!("Untitled-{n}"),
+            Where::Preview(p) => format!("preview:{p}"),
         }
     }
     pub fn file_name(&self) -> String {
@@ -27,6 +30,7 @@ impl Where {
             Where::Local(p) => p.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(),
             Where::Remote(p) => p.rsplit('/').next().unwrap_or(p).to_string(),
             Where::Untitled(n) => format!("Untitled-{n}"),
+            Where::Preview(p) => format!("Preview {}", p.rsplit(['/', '\\']).next().unwrap_or(p)),
         }
     }
 }
@@ -65,6 +69,9 @@ pub struct Doc {
     saved_hash: u64,
     undo: Vec<Change>,
     redo: Vec<Change>,
+    /// Bumped on every text change; `spans_rev` is the revision the spans were computed for.
+    pub rev: u64,
+    pub spans_rev: u64,
     /// Last known selection, used as the "before" state of the next edit.
     pub sel: Sel,
 }
@@ -97,6 +104,8 @@ impl Doc {
             undo: Vec::new(),
             redo: Vec::new(),
             sel: Sel::default(),
+            rev: 0,
+            spans_rev: u64::MAX,
         };
         if !d.loc.file_name().is_empty() {
             d.detect_grammar();
@@ -182,6 +191,7 @@ impl Doc {
         };
         let before = self.sel;
         self.text = new_text.to_string();
+        self.rev += 1;
         self.push(Change { start: pre, removed, inserted, before, after, kind, at: Instant::now() }, true);
         self.sel = after;
     }
@@ -191,6 +201,7 @@ impl Doc {
         let removed = self.text[e.start..e.end].to_string();
         let before = self.sel;
         e.apply(&mut self.text);
+        self.rev += 1;
         self.push(
             Change { start: e.start, removed, inserted: e.insert.clone(), before, after: e.sel, kind: Kind::Other, at: Instant::now() },
             false,
@@ -245,6 +256,7 @@ impl Doc {
     pub fn undo(&mut self) -> Option<Sel> {
         let c = self.undo.pop()?;
         self.text.replace_range(c.start..c.start + c.inserted.len(), &c.removed);
+        self.rev += 1;
         self.sel = c.before;
         let s = c.before;
         self.redo.push(c);
@@ -254,6 +266,7 @@ impl Doc {
     pub fn redo(&mut self) -> Option<Sel> {
         let c = self.redo.pop()?;
         self.text.replace_range(c.start..c.start + c.removed.len(), &c.inserted);
+        self.rev += 1;
         self.sel = c.after;
         let s = c.after;
         self.undo.push(c);

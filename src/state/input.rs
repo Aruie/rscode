@@ -69,7 +69,7 @@ impl State {
         if self.q_return_tree {
             app.invoke_focus_tree();
         } else if self.active.is_some() {
-            app.invoke_focus_editor();
+            self.focus_ed();
         } else {
             app.invoke_focus_root();
         }
@@ -440,13 +440,13 @@ impl State {
                     QAction::Open(p) => {
                         self.close_quick();
                         self.open_path(&p);
-                        app.invoke_focus_editor();
+                        self.focus_ed();
                     }
                     QAction::Tab(id) => {
                         self.close_quick();
                         if let Some(i) = self.tab_index(id) {
                             self.activate(i);
-                            app.invoke_focus_editor();
+                            self.focus_ed();
                         }
                     }
                     QAction::Choice(_) => {
@@ -469,7 +469,7 @@ impl State {
         let l0 = ops::line_index(t, p);
         self.center_line(l0);
         self.set_sel(Sel::caret(p));
-        self.ui().invoke_focus_editor();
+        self.focus_ed();
     }
 
     fn pick(&mut self, kind: PickKind, placeholder: &str, rows: Vec<QRow>) {
@@ -510,6 +510,7 @@ impl State {
             "editor.closeAll" => self.confirm_then(Then::CloseEditors),
             "editor.reopen" => self.reopen_closed(),
             "editor.next" => self.cycle_tab(1),
+            "editor.split" => self.move_to_other_group(None),
             "editor.prev" => self.cycle_tab(-1),
             "view.sidebar" => {
                 self.sidebar = !self.sidebar;
@@ -542,16 +543,17 @@ impl State {
             "editor.cut" | "editor.copy" | "editor.paste" | "editor.selectAll" => {
                 let w = self.app.clone();
                 let id = id.to_string();
-                app.invoke_focus_editor();
+                let g = self.g();
+                self.focus_ed();
                 later(move || {
                     if let Some(a) = w.upgrade() {
                         match id.as_str() {
-                            "editor.cut" => a.invoke_editor_cut(),
-                            "editor.copy" => a.invoke_editor_copy(),
-                            "editor.paste" => a.invoke_editor_paste(),
+                            "editor.cut" => a.invoke_editor_cut(g),
+                            "editor.copy" => a.invoke_editor_copy(g),
+                            "editor.paste" => a.invoke_editor_paste(g),
                             _ => {
-                                let len = a.get_editor_text().len() as i32;
-                                a.invoke_set_selection(0, len);
+                                let len = a.invoke_editor_text(g).len() as i32;
+                                a.invoke_set_selection(g, 0, len);
                             }
                         }
                     }
@@ -574,7 +576,7 @@ impl State {
                     _ => ("d".into(), true, false, false),
                 };
                 self.editor_key(&key, ctrl, shift, alt);
-                app.invoke_focus_editor();
+                self.focus_ed();
             }
             "editor.eol" => {
                 if self.active.is_some() {
@@ -770,6 +772,10 @@ impl State {
             self.mru_switch(true);
             return true;
         }
+        if ctrl && alt && !shift && (is_key(text, Key::RightArrow) || is_key(text, Key::LeftArrow)) {
+            self.move_to_other_group(Some(if is_key(text, Key::RightArrow) { 1 } else { 0 }));
+            return true;
+        }
         if ctrl && !alt && is_key(text, Key::PageDown) {
             self.run_command("editor.next");
             return true;
@@ -817,11 +823,14 @@ impl State {
                 return true;
             }
             (false, false, "1") => {
-                if self.active.is_some() {
-                    app.invoke_focus_editor();
-                }
+                self.focus_group(0);
                 return true;
             }
+            (false, false, "2") => {
+                self.focus_group(1);
+                return true;
+            }
+            (false, false, "\\") => "editor.split",
             _ => return self.ext_key(false, k, ctrl, shift, alt),
         };
         self.run_command(cmd);
@@ -937,7 +946,7 @@ impl State {
                 return;
             }
             if self.active.is_some() && !app.get_tree_focused() {
-                app.invoke_focus_editor();
+                self.focus_ed();
             }
         }
     }
@@ -1006,9 +1015,9 @@ impl State {
         app.set_replace_open(replace);
         self.find_count();
         if replace && !self.find.text.is_empty() {
-            app.invoke_focus_replace();
+            app.invoke_focus_replace(self.g());
         } else {
-            app.invoke_focus_find();
+            app.invoke_focus_find(self.g());
         }
     }
 
@@ -1017,7 +1026,7 @@ impl State {
         let app = self.ui();
         app.set_find_open(false);
         if self.active.is_some() {
-            app.invoke_focus_editor();
+            self.focus_ed();
         }
     }
 
@@ -1080,8 +1089,8 @@ impl State {
         let line = ops::line_index(&self.tabs[i].doc.text, s);
         let app = self.ui();
         let lh = app.get_line_h();
-        let y = -app.get_editor_scroll_y();
-        let vis = app.get_editor_visible_height();
+        let y = -self.scroll_y();
+        let vis = app.invoke_editor_visible_height(self.g());
         let ly = line as f32 * lh;
         if ly < y || ly + lh > y + vis {
             self.center_line(line);

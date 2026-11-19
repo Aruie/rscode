@@ -174,7 +174,8 @@ impl Widget {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Action {
-    OpenPanel { panel: String },
+    /// Open a panel as an editor tab; `beside` opens it in the group next to the active one.
+    OpenPanel { panel: String, #[serde(default)] beside: bool },
     ClosePanel { panel: String },
     OpenUrl { url: String },
     OpenFile { path: String },

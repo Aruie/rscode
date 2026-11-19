@@ -25,6 +25,7 @@ pub static COMMANDS: &[Cmd] = &[
     c!("editor.closeAll", "View: Close All Editors", "Ctrl+K Ctrl+W"),
     c!("editor.reopen", "View: Reopen Closed Editor", "Ctrl+Shift+T"),
     c!("editor.next", "View: Open Next Editor", "Ctrl+PageDown"),
+    c!("editor.split", "View: Move Editor into Other Group", "Ctrl+\\"),
     c!("editor.prev", "View: Open Previous Editor", "Ctrl+PageUp"),
     c!("view.sidebar", "View: Toggle Primary Side Bar Visibility", "Ctrl+B"),
     c!("view.explorer", "View: Show Explorer", "Ctrl+Shift+E"),

@@ -1,4 +1,5 @@
 import { ListView, ScrollView } from "std-widgets.slint";
+import { EditorGroup, GroupData } from "editor_group.slint";
 import { T } from "theme.slint";
 import { Icons, Icon, AppLogo } from "icons.slint";
 import {
@@ -6,14 +7,13 @@ import {
     ToolButton, ActivityItem, TreeRowView, EditorTab, StatusItem, MenuTitle, WinButton, BlueButton, KeyCap
 } from "widgets.slint";
 
-export { TreeRow, TabItem, QuickItem, MenuItemData, HostRow, Crumb, Toast, HlSpan, HlLine, SearchRow, ExtRow, ExtBlock }
+export { TreeRow, TabItem, QuickItem, MenuItemData, HostRow, Crumb, Toast, HlSpan, HlLine, SearchRow, ExtRow, ExtBlock, GroupData }
 
 export component App inherits Window {
     // ---------- window ----------
     in property <string> window-title: "rcode";
     title: root.window-title;
     no-frame: true;
-    resize-border-width: 5px;
     preferred-width: 1280px;
     preferred-height: 820px;
     min-width: 640px;
@@ -71,14 +71,6 @@ export component App inherits Window {
     in property <[ExtRow]> ext-rows;
     in property <string> ext-dir;
     callback ext-toggle(int);
-    in property <bool> panel-open;
-    in property <string> panel-title;
-    in property <[ExtBlock]> panel-blocks;
-    callback panel-close();
-    callback panel-link(string);
-    callback panel-button(string);
-    in property <bool> title-button-visible;
-    callback title-button-clicked();
 
     // CPU / memory of this process (title bar)
     in property <string> stats-label: "CPU 0.0%  ·  0 MB";
@@ -89,46 +81,28 @@ export component App inherits Window {
     in property <string> stats-mem-max;
     callback stats-clicked();
 
-    // ---------- editor ----------
-    in property <[TabItem]> tabs;
-    callback tab-clicked(int);
-    callback tab-close(int);
-    in property <[Crumb]> crumbs;
+    // ---------- editor groups ----------
+    in property <GroupData> group0;
+    in property <GroupData> group1;
+    in property <bool> split;
+    in-out property <float> split-ratio: 0.5;
     in property <bool> editor-visible: false;
-    in property <string> editor-message;
-    in property <bool> editor-read-only: false;
-    in-out property <string> editor-text <=> ti.text;
-    out property <int> editor-cursor: ti.cursor-position-byte-offset;
-    out property <int> editor-anchor: ti.anchor-position-byte-offset;
-    in-out property <length> editor-scroll-x <=> sv.content-x;
-    in-out property <length> editor-scroll-y <=> sv.content-y;
-    out property <length> editor-visible-height: sv.visible-height;
     in-out property <length> editor-font-size: 14px;
-    in property <int> line-count: 1;
-    in property <int> line-digits: 1;
-    in property <int> cursor-line: 0;
-    out property <length> line-h: ti.preferred-height / max(1, root.line-count);
-    out property <bool> editor-focused: ti.has-focus;
-    callback editor-edited(string);
-    in property <bool> hl-active;
-    in property <[HlLine]> hl-lines;
-    in-out property <length> caret-x;
-    in-out property <length> caret-y;
-    in-out property <bool> caret-on: true;
-    // first visible line and how many fit, reported whenever they change
-    out property <int> view-first: max(0, floor(-sv.content-y / root.line-h));
-    out property <int> view-rows: ceil(sv.visible-height / root.line-h) + 1;
-    callback editor-viewport(int, int);
-    changed view-first => {
-        root.editor-viewport(root.view-first, root.view-rows);
-    }
-    changed view-rows => {
-        root.editor-viewport(root.view-first, root.view-rows);
-    }
-    callback editor-key(string, bool, bool, bool) -> bool;
-    callback editor-cursor-moved(int, int);
-    callback gutter-clicked(int, bool);
+    out property <length> line-h: g0.line-h;
+    callback group-activated(int);
+    callback tab-clicked(int, int);
+    callback tab-close(int, int);
+    callback title-button-clicked(int);
+    callback editor-edited(int, string);
+    callback editor-key(int, string, bool, bool, bool) -> bool;
+    callback editor-cursor-moved(int, int, int);
+    callback gutter-clicked(int, int, bool);
+    callback editor-viewport(int, int, int);
+    callback panel-link(int, string);
+    callback panel-button(int, string);
     callback command(string);
+    // window edge resize: 0 N, 1 NE, 2 E, 3 SE, 4 S, 5 SW, 6 W, 7 NW
+    callback start-resize(int);
 
     // find widget
     in property <bool> find-open;
@@ -196,20 +170,91 @@ export component App inherits Window {
     callback global-key(string, bool, bool, bool) -> bool;
 
     // ---------- functions callable from Rust ----------
-    public function set-selection(anchor: int, focus: int) {
-        ti.set-selection-offsets(anchor, focus);
+    public function set-text(g: int, t: string) {
+        if g == 0 {
+            g0.set-text(t);
+        } else {
+            g1.set-text(t);
+        }
     }
-    public function focus-editor() {
-        ti.focus();
+    public function set-selection(g: int, anchor: int, focus: int) {
+        if g == 0 {
+            g0.set-selection(anchor, focus);
+        } else {
+            g1.set-selection(anchor, focus);
+        }
     }
-    public function editor-copy() {
-        ti.copy();
+    public function focus-editor(g: int) {
+        if g == 0 {
+            g0.focus-editor();
+        } else {
+            g1.focus-editor();
+        }
     }
-    public function editor-cut() {
-        ti.cut();
+    public function editor-copy(g: int) {
+        if g == 0 {
+            g0.copy();
+        } else {
+            g1.copy();
+        }
     }
-    public function editor-paste() {
-        ti.paste();
+    public function editor-cut(g: int) {
+        if g == 0 {
+            g0.cut();
+        } else {
+            g1.cut();
+        }
+    }
+    public function editor-paste(g: int) {
+        if g == 0 {
+            g0.paste();
+        } else {
+            g1.paste();
+        }
+    }
+    public function focus-find(g: int) {
+        if g == 0 {
+            g0.focus-find();
+        } else {
+            g1.focus-find();
+        }
+    }
+    public function focus-replace(g: int) {
+        if g == 0 {
+            g0.focus-replace();
+        } else {
+            g1.focus-replace();
+        }
+    }
+    public pure function editor-cursor(g: int) -> int {
+        return g == 0 ? g0.cursor : g1.cursor;
+    }
+    public pure function editor-anchor(g: int) -> int {
+        return g == 0 ? g0.anchor : g1.anchor;
+    }
+    public pure function editor-text(g: int) -> string {
+        return g == 0 ? g0.text : g1.text;
+    }
+    public pure function editor-scroll-x(g: int) -> length {
+        return g == 0 ? g0.scroll-x : g1.scroll-x;
+    }
+    public pure function editor-scroll-y(g: int) -> length {
+        return g == 0 ? g0.scroll-y : g1.scroll-y;
+    }
+    public function set-scroll(g: int, x: length, y: length) {
+        if g == 0 {
+            g0.scroll-x = x;
+            g0.scroll-y = y;
+        } else {
+            g1.scroll-x = x;
+            g1.scroll-y = y;
+        }
+    }
+    public pure function editor-visible-height(g: int) -> length {
+        return g == 0 ? g0.visible-height : g1.visible-height;
+    }
+    public pure function editor-focused(g: int) -> bool {
+        return g0.editor-focused || g1.editor-focused;
     }
     public function focus-tree() {
         tree-fs.focus();
@@ -217,25 +262,6 @@ export component App inherits Window {
     public function focus-root() {
         root-fs.focus();
     }
-    public function focus-find() {
-        find-input.focus();
-        find-input.select-all();
-    }
-    public function focus-replace() {
-        replace-input.focus();
-        replace-input.select-all();
-    }
-
-    private property <length> ch: root.editor-font-size * 0.55;
-    Timer {
-        interval: 530ms;
-        running: root.hl-active && root.editor-focused;
-        triggered => {
-            root.caret-on = !root.caret-on;
-        }
-    }
-    private property <length> gutter-w: max(5, root.line-digits) * root.ch + 34px;
-
     root-fs := FocusScope {
         focus-on-click: false;
         capture-key-pressed(e) => {
@@ -1056,596 +1082,171 @@ export component App inherits Window {
                     }
                 }
 
-                // ---------- editor group ----------
-                Rectangle {
+                // ---------- editor groups ----------
+                groups := Rectangle {
                     horizontal-stretch: 1;
                     background: T.bg-editor;
-
-                    VerticalLayout {
-                        spacing: 0;
-                        // tabs
-                        if root.tabs.length > 0: Rectangle {
-                            height: 35px;
-                            background: T.bg-side;
-                            Rectangle {
-                                y: parent.height - 1px;
-                                height: 1px;
-                                background: T.border;
-                            }
-
-                            if root.title-button-visible: Rectangle {
-                                x: parent.width - self.width;
-                                width: 36px;
-                                height: 34px;
-                                background: T.bg-side;
-                                ToolButton {
-                                    icon: Icons.open-preview;
-                                    clicked => {
-                                        root.title-button-clicked();
-                                    }
-                                }
-                            }
-                            Flickable {
-                                width: parent.width - (root.title-button-visible ? 36px : 0px);
-                                x: 0;
-                                content-width: tabs-row.preferred-width;
-                                tabs-row := HorizontalLayout {
-                                    alignment: start;
-                                    spacing: 0;
-                                    for t[i] in root.tabs: EditorTab {
-                                        tab: t;
-                                        clicked => {
-                                            root.tab-clicked(i);
-                                        }
-                                        close => {
-                                            root.tab-close(i);
-                                        }
-                                    }
-                                }
-                            }
+                    property <length> w0: root.split ? max(120px, min(self.width - 120px, self.width * root.split-ratio)) : self.width;
+                    g0 := EditorGroup {
+                        x: 0;
+                        width: parent.w0;
+                        data: root.group0;
+                        editor-font-size: root.editor-font-size;
+                        find-open: root.find-open;
+                        replace-open: root.replace-open;
+                        find-text <=> root.find-text;
+                        replace-text <=> root.replace-text;
+                        find-info: root.find-info;
+                        find-case: root.find-case;
+                        find-word: root.find-word;
+                        activated => {
+                            root.group-activated(0);
                         }
-
-                        // breadcrumbs
-                        if root.tabs.length > 0: Rectangle {
-                            height: 22px;
-                            HorizontalLayout {
-                                padding-left: 14px;
-                                spacing: 2px;
-                                alignment: start;
-                                for c[i] in root.crumbs: HorizontalLayout {
-                                    spacing: 4px;
-                                    if i > 0: Icon {
-                                        y: 4px;
-                                        d: Icons.chevron-right;
-                                        size: 14px;
-                                        color: T.fg-muted;
-                                    }
-                                    if c.glyph != "": Text {
-                                        text: c.glyph;
-                                        color: c.glyph-color;
-                                        font-size: 10px;
-                                        font-weight: 700;
-                                        vertical-alignment: center;
-                                    }
-                                    Text {
-                                        text: c.label;
-                                        color: T.fg-dim;
-                                        vertical-alignment: center;
-                                    }
-                                }
-                            }
+                        tab-clicked(i) => {
+                            root.tab-clicked(0, i);
                         }
-
-                        // editor body
-                        Rectangle {
-                            vertical-stretch: 1;
-                            clip: true;
-
-                            // welcome / watermark
-                            if root.tabs.length == 0: VerticalLayout {
-                                alignment: center;
-                                spacing: 10px;
-                                Rectangle {
-                                    height: 150px;
-                                    Path {
-                                        width: 150px;
-                                        height: 150px;
-                                        viewbox-width: 24;
-                                        viewbox-height: 24;
-                                        commands: "M17 2 L22 4.5 V19.5 L17 22 L7 13 L3 16 L1.5 15 V9 L3 8 L7 11 Z M17 7 L11.5 12 L17 17 Z";
-                                        fill: #ffffff0a;
-                                        stroke: transparent;
-                                    }
-                                }
-
-                                Rectangle {
-                                    height: 20px;
-                                }
-
-                                for row in [
-                                    { label: "Show All Commands", keys: ["Ctrl", "Shift", "P"] },
-                                    { label: "Go to File", keys: ["Ctrl", "P"] },
-                                    { label: "Open Folder", keys: ["Ctrl", "K", "Ctrl", "O"] },
-                                    { label: "Connect to Host", keys: ["Ctrl", "Alt", "O"] },
-                                    { label: "Toggle Primary Side Bar", keys: ["Ctrl", "B"] },
-                                ]: HorizontalLayout {
-                                    alignment: center;
-                                    spacing: 12px;
-                                    Text {
-                                        width: 180px;
-                                        text: row.label;
-                                        color: T.fg-muted;
-                                        horizontal-alignment: right;
-                                        vertical-alignment: center;
-                                    }
-
-                                    HorizontalLayout {
-                                        width: 180px;
-                                        alignment: start;
-                                        spacing: 3px;
-                                        for k[j] in row.keys: HorizontalLayout {
-                                            spacing: 3px;
-                                            if j > 0: Text {
-                                                text: "+";
-                                                color: T.fg-muted;
-                                                vertical-alignment: center;
-                                            }
-                                            KeyCap {
-                                                text: k;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            if root.tabs.length > 0 && root.editor-message != "": Text {
-                                x: 20px;
-                                y: 20px;
-                                width: parent.width - 40px;
-                                text: root.editor-message;
-                                color: T.fg;
-                                wrap: word-wrap;
-                            }
-
-                            ContextMenuArea {
-                                visible: root.editor-visible;
-                                enabled: root.editor-visible;
-                                Menu {
-                                    MenuItem {
-                                        title: "Cut";
-                                        activated => {
-                                            root.command("editor.cut");
-                                        }
-                                    }
-
-                                    MenuItem {
-                                        title: "Copy";
-                                        activated => {
-                                            root.command("editor.copy");
-                                        }
-                                    }
-
-                                    MenuItem {
-                                        title: "Paste";
-                                        activated => {
-                                            root.command("editor.paste");
-                                        }
-                                    }
-
-                                    MenuSeparator { }
-
-                                    MenuItem {
-                                        title: "Command Palette...";
-                                        activated => {
-                                            root.command("palette");
-                                        }
-                                    }
-                                }
-
-                                sv := ScrollView {
-                                    visible: root.editor-visible;
-                                    content-width: max(self.visible-width, root.gutter-w + ti.preferred-width + 60px);
-                                    content-height: max(self.visible-height, ti.preferred-height + self.visible-height - root.line-h);
-
-                                    // current line highlight
-                                    Rectangle {
-                                        x: -sv.content-x + root.gutter-w;
-                                        y: root.cursor-line * root.line-h;
-                                        width: sv.visible-width - root.gutter-w;
-                                        height: root.line-h;
-                                        border-width: 2px;
-                                        border-color: T.line-highlight;
-                                        visible: ti.cursor-position-byte-offset == ti.anchor-position-byte-offset;
-                                    }
-
-                                    ti := TextInput {
-                                        x: root.gutter-w;
-                                        y: 0;
-                                        width: max(sv.visible-width - root.gutter-w, self.preferred-width + 40px);
-                                        height: max(sv.visible-height, self.preferred-height);
-                                        single-line: false;
-                                        wrap: no-wrap;
-                                        read-only: root.editor-read-only;
-                                        enabled: root.editor-visible;
-                                        font-family: T.mono-font;
-                                        font-size: root.editor-font-size;
-                                        line-height-factor: 1.17;
-                                        // with a grammar the text is drawn by the colored overlay below,
-                                        // so the input only draws the selection background
-                                        color: root.hl-active ? transparent : #cccccc;
-                                        selection-background-color: T.selection;
-                                        selection-foreground-color: root.hl-active ? transparent : #cccccc;
-                                        text-cursor-width: 2px;
-                                        page-height: sv.visible-height;
-                                        edited => {
-                                            root.editor-edited(self.text);
-                                        }
-                                        key-pressed(e) => {
-                                            if root.editor-key(e.text, e.modifiers.control, e.modifiers.shift, e.modifiers.alt) {
-                                                return EventResult.accept;
-                                            }
-                                            return EventResult.reject;
-                                        }
-                                        cursor-position-changed(p) => {
-                                            // keep the cursor visible (TextInput does not scroll by itself)
-                                            if p.y + sv.content-y < 0 {
-                                                sv.content-y = -p.y;
-                                            } else if p.y + root.line-h + sv.content-y > sv.visible-height {
-                                                sv.content-y = min(0px, sv.visible-height - p.y - root.line-h);
-                                            }
-                                            if p.x + sv.content-x < 0 {
-                                                sv.content-x = min(0px, -p.x + 20px);
-                                            } else if p.x + sv.content-x > sv.visible-width - root.gutter-w - 30px {
-                                                sv.content-x = min(0px, sv.visible-width - root.gutter-w - 30px - p.x);
-                                            }
-                                            root.caret-x = p.x;
-                                            root.caret-y = p.y;
-                                            root.caret-on = true;
-                                            root.editor-cursor-moved(self.cursor-position-byte-offset, self.anchor-position-byte-offset);
-                                        }
-                                    }
-
-                                    // colored text, only for the visible lines
-                                    for l in root.hl-lines: HorizontalLayout {
-                                        x: root.gutter-w;
-                                        y: l.line * root.line-h;
-                                        height: root.line-h;
-                                        spacing: 0;
-                                        alignment: start;
-                                        for sp in l.spans: Text {
-                                            text: sp.text;
-                                            color: sp.color;
-                                            font-family: T.mono-font;
-                                            font-size: root.editor-font-size;
-                                            line-height-factor: 1.17;
-                                            vertical-alignment: top;
-                                            wrap: no-wrap;
-                                        }
-                                    }
-
-                                    // the input's own caret is invisible while its text color is transparent
-                                    if root.hl-active && ti.has-focus && root.caret-on && ti.cursor-position-byte-offset == ti.anchor-position-byte-offset: Rectangle {
-                                        x: root.gutter-w + root.caret-x;
-                                        y: root.caret-y;
-                                        width: 2px;
-                                        height: root.line-h;
-                                        background: #aeafad;
-                                    }
-
-                                    // gutter (line numbers), fixed horizontally, only visible lines are created
-                                    Rectangle {
-                                        x: -sv.content-x;
-                                        y: -sv.content-y;
-                                        width: root.gutter-w;
-                                        height: sv.visible-height;
-                                        background: T.bg-editor;
-                                        clip: true;
-                                        property <int> first: max(0, floor(-sv.content-y / root.line-h));
-                                        property <int> rows: ceil(sv.visible-height / root.line-h) + 1;
-                                        for i in self.rows: Text {
-                                            property <int> ln: parent.first + i;
-                                            x: 0;
-                                            y: self.ln * root.line-h + sv.content-y;
-                                            width: root.gutter-w - 26px;
-                                            height: root.line-h;
-                                            visible: self.ln < root.line-count;
-                                            text: self.ln + 1;
-                                            font-family: T.mono-font;
-                                            font-size: root.editor-font-size;
-                                            color: self.ln == root.cursor-line ? T.line-num-active : T.line-num;
-                                            horizontal-alignment: right;
-                                            vertical-alignment: center;
-                                        }
-                                        gta := TouchArea {
-                                            pointer-event(e) => {
-                                                if e.kind == PointerEventKind.down && e.button == PointerEventButton.left {
-                                                    root.gutter-clicked(floor((self.mouse-y - sv.content-y) / root.line-h), e.modifiers.shift);
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            // ---------- find / replace widget ----------
-                            Rectangle {
-                                visible: root.find-open && root.editor-visible;
-                                x: parent.width - self.width - 28px;
-                                y: 0;
-                                width: 440px;
-                                height: root.replace-open ? 66px : 35px;
-                                background: T.widget-bg;
-                                border-radius: 0px;
-                                drop-shadow-blur: 8px;
-                                drop-shadow-color: T.shadow;
-                                drop-shadow-offset-y: 2px;
-                                Rectangle {
-                                    x: 0;
-                                    width: 3px;
-                                    background: #454545;
-                                }
-
-                                ToolButton {
-                                    x: 6px;
-                                    y: 6px;
-                                    width: 16px;
-                                    height: root.replace-open ? 54px : 22px;
-                                    icon: root.replace-open ? Icons.chevron-down : Icons.chevron-right;
-                                    clicked => {
-                                        root.find-toggle-replace();
-                                    }
-                                }
-
-                                // find row
-                                Rectangle {
-                                    x: 26px;
-                                    y: 5px;
-                                    width: 250px;
-                                    height: 24px;
-                                    background: T.input-bg;
-                                    border-width: 1px;
-                                    border-color: find-input.has-focus ? T.focus-border : T.input-border;
-                                    border-radius: 2px;
-                                    find-input := TextInput {
-                                        x: 6px;
-                                        width: parent.width - 60px;
-                                        height: parent.height;
-                                        vertical-alignment: center;
-                                        single-line: true;
-                                        text <=> root.find-text;
-                                        color: T.fg;
-                                        selection-background-color: T.selection;
-                                        edited => {
-                                            root.find-edited(self.text);
-                                        }
-                                        key-pressed(e) => {
-                                            if e.text == Key.Return {
-                                                root.find-next(e.modifiers.shift);
-                                                return EventResult.accept;
-                                            }
-                                            if e.text == Key.Escape {
-                                                root.find-close();
-                                                return EventResult.accept;
-                                            }
-                                            return EventResult.reject;
-                                        }
-                                    }
-
-                                    if root.find-text == "": Text {
-                                        x: 6px;
-                                        text: "Find";
-                                        color: T.fg-muted;
-                                        vertical-alignment: center;
-                                    }
-                                    HorizontalLayout {
-                                        x: parent.width - 52px;
-                                        width: 50px;
-                                        y: 2px;
-                                        height: 20px;
-                                        spacing: 2px;
-                                        ToolButton {
-                                            width: 20px;
-                                            height: 20px;
-                                            icon: "M3 17 L7 7 L11 17 M4.5 13.5 H9.5 M13 12 a3 3 0 1 0 6 0 a3 3 0 1 0 -6 0 Z M19 9 V17";
-                                            toggled: root.find-case;
-                                            clicked => {
-                                                root.find-toggle("case");
-                                            }
-                                        }
-
-                                        ToolButton {
-                                            width: 20px;
-                                            height: 20px;
-                                            icon: "M3 18 H21 M3 15 V18 M21 15 V18 M5 12 a2.5 2.5 0 1 0 5 0 a2.5 2.5 0 1 0 -5 0 Z M13 7 V14.5 M13 12 a2.5 2.5 0 1 0 5 0 a2.5 2.5 0 1 0 -5 0 Z";
-                                            toggled: root.find-word;
-                                            clicked => {
-                                                root.find-toggle("word");
-                                            }
-                                        }
-                                    }
-                                }
-
-                                HorizontalLayout {
-                                    x: 282px;
-                                    y: 6px;
-                                    height: 22px;
-                                    spacing: 2px;
-                                    Text {
-                                        width: 70px;
-                                        text: root.find-info;
-                                        color: root.find-info == "No results" ? T.error : T.fg;
-                                        font-size: 12px;
-                                        vertical-alignment: center;
-                                    }
-
-                                    ToolButton {
-                                        icon: Icons.arrow-up;
-                                        clicked => {
-                                            root.find-next(true);
-                                        }
-                                    }
-
-                                    ToolButton {
-                                        icon: Icons.arrow-down;
-                                        clicked => {
-                                            root.find-next(false);
-                                        }
-                                    }
-
-                                    ToolButton {
-                                        icon: Icons.close;
-                                        clicked => {
-                                            root.find-close();
-                                        }
-                                    }
-                                }
-
-                                // replace row
-                                Rectangle {
-                                    visible: root.replace-open;
-                                    x: 26px;
-                                    y: 36px;
-                                    width: 250px;
-                                    height: 24px;
-                                    background: T.input-bg;
-                                    border-width: 1px;
-                                    border-color: replace-input.has-focus ? T.focus-border : T.input-border;
-                                    border-radius: 2px;
-                                    replace-input := TextInput {
-                                        x: 6px;
-                                        width: parent.width - 12px;
-                                        height: parent.height;
-                                        vertical-alignment: center;
-                                        single-line: true;
-                                        text <=> root.replace-text;
-                                        color: T.fg;
-                                        selection-background-color: T.selection;
-                                        key-pressed(e) => {
-                                            if e.text == Key.Return {
-                                                if e.modifiers.control && e.modifiers.alt {
-                                                    root.replace-all();
-                                                } else {
-                                                    root.replace-one();
-                                                }
-                                                return EventResult.accept;
-                                            }
-                                            if e.text == Key.Escape {
-                                                root.find-close();
-                                                return EventResult.accept;
-                                            }
-                                            return EventResult.reject;
-                                        }
-                                    }
-
-                                    if root.replace-text == "": Text {
-                                        x: 6px;
-                                        text: "Replace";
-                                        color: T.fg-muted;
-                                        vertical-alignment: center;
-                                    }
-                                }
-                                if root.replace-open: HorizontalLayout {
-                                    x: 282px;
-                                    y: 37px;
-                                    height: 22px;
-                                    spacing: 2px;
-                                    alignment: start;
-                                    ToolButton {
-                                        icon: Icons.replace;
-                                        clicked => {
-                                            root.replace-one();
-                                        }
-                                    }
-
-                                    ToolButton {
-                                        icon: Icons.replace-all;
-                                        clicked => {
-                                            root.replace-all();
-                                        }
-                                    }
-                                }
-                            }
+                        tab-close(i) => {
+                            root.tab-close(0, i);
+                        }
+                        title-button => {
+                            root.title-button-clicked(0);
+                        }
+                        command(c) => {
+                            root.command(c);
+                        }
+                        editor-edited(t) => {
+                            root.editor-edited(0, t);
+                        }
+                        editor-key(t, c, s, a) => {
+                            return root.editor-key(0, t, c, s, a);
+                        }
+                        editor-cursor-moved(c, a) => {
+                            root.editor-cursor-moved(0, c, a);
+                        }
+                        gutter-clicked(l, s) => {
+                            root.gutter-clicked(0, l, s);
+                        }
+                        editor-viewport(f, r) => {
+                            root.editor-viewport(0, f, r);
+                        }
+                        panel-link(u) => {
+                            root.panel-link(0, u);
+                        }
+                        panel-button(b) => {
+                            root.panel-button(0, b);
+                        }
+                        find-edited(t) => {
+                            root.find-edited(t);
+                        }
+                        find-next(b) => {
+                            root.find-next(b);
+                        }
+                        replace-one => {
+                            root.replace-one();
+                        }
+                        replace-all => {
+                            root.replace-all();
+                        }
+                        find-close => {
+                            root.find-close();
+                        }
+                        find-toggle-replace => {
+                            root.find-toggle-replace();
+                        }
+                        find-toggle(w) => {
+                            root.find-toggle(w);
                         }
                     }
-                }
-                // ---------- extension panel beside the editor ----------
-                if root.panel-open: Rectangle {
-                    horizontal-stretch: 1;
-                    background: T.bg-editor;
-                    Rectangle {
-                        x: 0;
+
+                    g1 := EditorGroup {
+                        x: parent.w0;
+                        width: root.split ? parent.width - parent.w0 : 0px;
+                        visible: root.split;
+                        data: root.group1;
+                        editor-font-size: root.editor-font-size;
+                        find-open: root.find-open;
+                        replace-open: root.replace-open;
+                        find-text <=> root.find-text;
+                        replace-text <=> root.replace-text;
+                        find-info: root.find-info;
+                        find-case: root.find-case;
+                        find-word: root.find-word;
+                        activated => {
+                            root.group-activated(1);
+                        }
+                        tab-clicked(i) => {
+                            root.tab-clicked(1, i);
+                        }
+                        tab-close(i) => {
+                            root.tab-close(1, i);
+                        }
+                        title-button => {
+                            root.title-button-clicked(1);
+                        }
+                        command(c) => {
+                            root.command(c);
+                        }
+                        editor-edited(t) => {
+                            root.editor-edited(1, t);
+                        }
+                        editor-key(t, c, s, a) => {
+                            return root.editor-key(1, t, c, s, a);
+                        }
+                        editor-cursor-moved(c, a) => {
+                            root.editor-cursor-moved(1, c, a);
+                        }
+                        gutter-clicked(l, s) => {
+                            root.gutter-clicked(1, l, s);
+                        }
+                        editor-viewport(f, r) => {
+                            root.editor-viewport(1, f, r);
+                        }
+                        panel-link(u) => {
+                            root.panel-link(1, u);
+                        }
+                        panel-button(b) => {
+                            root.panel-button(1, b);
+                        }
+                        find-edited(t) => {
+                            root.find-edited(t);
+                        }
+                        find-next(b) => {
+                            root.find-next(b);
+                        }
+                        replace-one => {
+                            root.replace-one();
+                        }
+                        replace-all => {
+                            root.replace-all();
+                        }
+                        find-close => {
+                            root.find-close();
+                        }
+                        find-toggle-replace => {
+                            root.find-toggle-replace();
+                        }
+                        find-toggle(w) => {
+                            root.find-toggle(w);
+                        }
+                    }
+
+                    // border and sash between the groups
+                    if root.split: Rectangle {
+                        x: parent.w0;
                         width: 1px;
                         background: T.border;
                     }
-
-                    VerticalLayout {
-                        Rectangle {
-                            height: 35px;
-                            background: T.bg-side;
-                            Rectangle {
-                                y: parent.height - 1px;
-                                height: 1px;
-                                background: T.border;
-                            }
-
-                            // looks like an active editor tab
-                            Rectangle {
-                                x: 1px;
-                                width: ptl.preferred-width;
-                                background: T.bg-editor;
-                                Rectangle {
-                                    y: 0;
-                                    height: 1px;
-                                    background: T.accent;
-                                }
-
-                                ptl := HorizontalLayout {
-                                    padding-left: 10px;
-                                    padding-right: 8px;
-                                    spacing: 6px;
-                                    Icon {
-                                        y: (35px - 14px) / 2;
-                                        d: Icons.open-preview;
-                                        size: 14px;
-                                        color: #519aba;
-                                    }
-
-                                    Text {
-                                        text: root.panel-title;
-                                        color: T.fg-bright;
-                                        vertical-alignment: center;
-                                    }
-
-                                    ToolButton {
-                                        y: (35px - 22px) / 2;
-                                        icon: Icons.close;
-                                        clicked => {
-                                            root.panel-close();
-                                        }
-                                    }
-                                }
+                    if root.split: TouchArea {
+                        x: parent.w0 - 2px;
+                        width: 5px;
+                        mouse-cursor: ew-resize;
+                        moved => {
+                            if self.pressed {
+                                root.split-ratio = clamp((parent.w0 + self.mouse-x - self.pressed-x) / parent.width, 0.15, 0.85);
                             }
                         }
-
-                        ScrollView {
-                            vertical-stretch: 1;
-                            VerticalLayout {
-                                padding-left: 26px;
-                                padding-right: 26px;
-                                padding-top: 10px;
-                                padding-bottom: 40px;
-                                spacing: 0;
-                                alignment: start;
-                                for blk in root.panel-blocks: ExtBlockView {
-                                    b: blk;
-                                    link(u) => {
-                                        root.panel-link(u);
-                                    }
-                                    button(id) => {
-                                        root.panel-button(id);
-                                    }
-                                }
-                            }
+                        Rectangle {
+                            background: parent.pressed || parent.has-hover ? T.accent : transparent;
                         }
                     }
                 }
@@ -2227,6 +1828,32 @@ export component App inherits Window {
                                 root.dialog-result(i);
                             }
                         }
+                    }
+                }
+            }
+        }
+
+        // ================= WINDOW EDGES (resize a frameless window) =================
+        if !root.maximized: Rectangle {
+            property <length> e: 5px;
+            for z in [
+                { d: 0, x: 8px, y: 0px, w: root.width - 16px, h: 4px, c: MouseCursor.ns-resize },
+                { d: 4, x: 8px, y: root.height - 4px, w: root.width - 16px, h: 4px, c: MouseCursor.ns-resize },
+                { d: 6, x: 0px, y: 8px, w: 4px, h: root.height - 16px, c: MouseCursor.ew-resize },
+                { d: 2, x: root.width - 4px, y: 8px, w: 4px, h: root.height - 16px, c: MouseCursor.ew-resize },
+                { d: 7, x: 0px, y: 0px, w: 8px, h: 8px, c: MouseCursor.nwse-resize },
+                { d: 3, x: root.width - 8px, y: root.height - 8px, w: 8px, h: 8px, c: MouseCursor.nwse-resize },
+                { d: 1, x: root.width - 8px, y: 0px, w: 8px, h: 8px, c: MouseCursor.nesw-resize },
+                { d: 5, x: 0px, y: root.height - 8px, w: 8px, h: 8px, c: MouseCursor.nesw-resize },
+            ]: TouchArea {
+                x: z.x;
+                y: z.y;
+                width: z.w;
+                height: z.h;
+                mouse-cursor: z.c;
+                pointer-event(ev) => {
+                    if ev.kind == PointerEventKind.down && ev.button == PointerEventButton.left {
+                        root.start-resize(z.d);
                     }
                 }
             }

@@ -303,7 +303,7 @@ impl State {
         let s = ops::floor_char(t, (ls + a).min(le));
         let e = ops::floor_char(t, (ls + b).min(le));
         self.center_line(line.saturating_sub(1));
-        self.ui().invoke_focus_editor();
+        self.focus_ed();
         self.set_sel(Sel::new(s, e));
     }
 

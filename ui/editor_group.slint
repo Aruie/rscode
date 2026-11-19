@@ -1,0 +1,659 @@
+import { ScrollView } from "std-widgets.slint";
+import { T } from "theme.slint";
+import { Icons, Icon } from "icons.slint";
+import { TabItem, Crumb, HlLine, ExtBlock, ToolButton, EditorTab, KeyCap, ExtBlockView } from "widgets.slint";
+
+// Everything one editor group shows. kind: 0 empty, 1 text, 2 message, 3 preview
+export struct GroupData {
+    tabs: [TabItem],
+    crumbs: [Crumb],
+    kind: int,
+    message: string,
+    read-only: bool,
+    line-count: int,
+    line-digits: int,
+    cursor-line: int,
+    hl-active: bool,
+    hl-lines: [HlLine],
+    blocks: [ExtBlock],
+    title-button: bool,
+    active: bool,
+}
+
+// One editor group: tab bar, breadcrumbs, text editor or preview, find widget.
+export component EditorGroup inherits Rectangle {
+    in property <GroupData> data;
+    in property <length> editor-font-size: 14px;
+    private property <bool> text-visible: root.data.kind == 1;
+    background: T.bg-editor;
+    clip: true;
+
+    callback activated();
+    callback tab-clicked(int);
+    callback tab-close(int);
+    callback title-button();
+    callback command(string);
+    callback editor-edited(string);
+    callback editor-key(string, bool, bool, bool) -> bool;
+    callback editor-cursor-moved(int, int);
+    callback gutter-clicked(int, bool);
+    callback editor-viewport(int, int);
+    callback panel-link(string);
+    callback panel-button(string);
+
+    // find widget (shown in the active group only)
+    in property <bool> find-open;
+    in property <bool> replace-open;
+    in-out property <string> find-text;
+    in-out property <string> replace-text;
+    in property <string> find-info;
+    in property <bool> find-case;
+    in property <bool> find-word;
+    callback find-edited(string);
+    callback find-next(bool);
+    callback replace-one();
+    callback replace-all();
+    callback find-close();
+    callback find-toggle-replace();
+    callback find-toggle(string);
+
+    out property <int> cursor: ti.cursor-position-byte-offset;
+    out property <int> anchor: ti.anchor-position-byte-offset;
+    out property <string> text: ti.text;
+    in-out property <length> scroll-x <=> sv.content-x;
+    in-out property <length> scroll-y <=> sv.content-y;
+    out property <length> visible-height: sv.visible-height;
+    out property <bool> editor-focused: ti.has-focus;
+    out property <length> line-h: ti.preferred-height / max(1, root.data.line-count);
+    in-out property <length> caret-x;
+    in-out property <length> caret-y;
+    in-out property <bool> caret-on: true;
+    out property <int> view-first: max(0, floor(-sv.content-y / root.line-h));
+    out property <int> view-rows: ceil(sv.visible-height / root.line-h) + 1;
+    changed view-first => {
+        root.editor-viewport(root.view-first, root.view-rows);
+    }
+    changed view-rows => {
+        root.editor-viewport(root.view-first, root.view-rows);
+    }
+    changed editor-focused => {
+        if self.editor-focused {
+            root.activated();
+        }
+    }
+
+    public function set-text(t: string) {
+        ti.text = t;
+    }
+    public function set-selection(anchor: int, focus: int) {
+        ti.set-selection-offsets(anchor, focus);
+    }
+    public function focus-editor() {
+        ti.focus();
+    }
+    public function copy() {
+        ti.copy();
+    }
+    public function cut() {
+        ti.cut();
+    }
+    public function paste() {
+        ti.paste();
+    }
+    public function focus-find() {
+        find-input.focus();
+        find-input.select-all();
+    }
+    public function focus-replace() {
+        replace-input.focus();
+        replace-input.select-all();
+    }
+
+    private property <length> ch: root.editor-font-size * 0.55;
+    private property <length> gutter-w: max(5, root.data.line-digits) * root.ch + 34px;
+    Timer {
+        interval: 530ms;
+        running: root.data.hl-active && root.editor-focused;
+        triggered => {
+            root.caret-on = !root.caret-on;
+        }
+    }
+
+    VerticalLayout {
+        spacing: 0;
+        // tabs
+        if root.data.tabs.length > 0: Rectangle {
+            height: 35px;
+            background: T.bg-side;
+            Rectangle {
+                y: parent.height - 1px;
+                height: 1px;
+                background: T.border;
+            }
+
+            if root.data.title-button: Rectangle {
+                x: parent.width - self.width;
+                width: 36px;
+                height: 34px;
+                background: T.bg-side;
+                ToolButton {
+                    icon: Icons.open-preview;
+                    clicked => {
+                        root.title-button();
+                    }
+                }
+            }
+            Flickable {
+                width: parent.width - (root.data.title-button ? 36px : 0px);
+                x: 0;
+                content-width: tabs-row.preferred-width;
+                tabs-row := HorizontalLayout {
+                    alignment: start;
+                    spacing: 0;
+                    for t[i] in root.data.tabs: EditorTab {
+                        tab: t;
+                        clicked => {
+                            root.tab-clicked(i);
+                        }
+                        close => {
+                            root.tab-close(i);
+                        }
+                    }
+                }
+            }
+        }
+
+        // breadcrumbs
+        if root.data.tabs.length > 0: Rectangle {
+            height: 22px;
+            HorizontalLayout {
+                padding-left: 14px;
+                spacing: 2px;
+                alignment: start;
+                for c[i] in root.data.crumbs: HorizontalLayout {
+                    spacing: 4px;
+                    if i > 0: Icon {
+                        y: 4px;
+                        d: Icons.chevron-right;
+                        size: 14px;
+                        color: T.fg-muted;
+                    }
+                    if c.glyph != "": Text {
+                        text: c.glyph;
+                        color: c.glyph-color;
+                        font-size: 10px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: c.label;
+                        color: T.fg-dim;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+
+        // editor body
+        Rectangle {
+            vertical-stretch: 1;
+            clip: true;
+
+            // welcome / watermark
+            if root.data.tabs.length == 0: VerticalLayout {
+                alignment: center;
+                spacing: 10px;
+                Rectangle {
+                    height: 150px;
+                    Path {
+                        width: 150px;
+                        height: 150px;
+                        viewbox-width: 24;
+                        viewbox-height: 24;
+                        commands: "M17 2 L22 4.5 V19.5 L17 22 L7 13 L3 16 L1.5 15 V9 L3 8 L7 11 Z M17 7 L11.5 12 L17 17 Z";
+                        fill: #ffffff0a;
+                        stroke: transparent;
+                    }
+                }
+
+                Rectangle {
+                    height: 20px;
+                }
+
+                for row in [
+                    { label: "Show All Commands", keys: ["Ctrl", "Shift", "P"] },
+                    { label: "Go to File", keys: ["Ctrl", "P"] },
+                    { label: "Open Folder", keys: ["Ctrl", "K", "Ctrl", "O"] },
+                    { label: "Connect to Host", keys: ["Ctrl", "Alt", "O"] },
+                    { label: "Toggle Primary Side Bar", keys: ["Ctrl", "B"] },
+                ]: HorizontalLayout {
+                    alignment: center;
+                    spacing: 12px;
+                    Text {
+                        width: 180px;
+                        text: row.label;
+                        color: T.fg-muted;
+                        horizontal-alignment: right;
+                        vertical-alignment: center;
+                    }
+
+                    HorizontalLayout {
+                        width: 180px;
+                        alignment: start;
+                        spacing: 3px;
+                        for k[j] in row.keys: HorizontalLayout {
+                            spacing: 3px;
+                            if j > 0: Text {
+                                text: "+";
+                                color: T.fg-muted;
+                                vertical-alignment: center;
+                            }
+                            KeyCap {
+                                text: k;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if root.data.tabs.length > 0 && root.data.message != "": Text {
+                x: 20px;
+                y: 20px;
+                width: parent.width - 40px;
+                text: root.data.message;
+                color: T.fg;
+                wrap: word-wrap;
+            }
+
+            // preview tab (extension widgets)
+            if root.data.kind == 3: Rectangle {
+                TouchArea {
+                    pointer-event(e) => {
+                        if e.kind == PointerEventKind.down {
+                            root.activated();
+                        }
+                    }
+                }
+
+                ScrollView {
+                    VerticalLayout {
+                        padding-left: 26px;
+                        padding-right: 26px;
+                        padding-top: 10px;
+                        padding-bottom: 40px;
+                        spacing: 0;
+                        alignment: start;
+                        for blk in root.data.blocks: ExtBlockView {
+                            b: blk;
+                            link(u) => {
+                                root.panel-link(u);
+                            }
+                            button(id) => {
+                                root.panel-button(id);
+                            }
+                        }
+                    }
+                }
+            }
+
+            ContextMenuArea {
+                visible: root.text-visible;
+                enabled: root.text-visible;
+                Menu {
+                    MenuItem {
+                        title: "Cut";
+                        activated => {
+                            root.command("editor.cut");
+                        }
+                    }
+
+                    MenuItem {
+                        title: "Copy";
+                        activated => {
+                            root.command("editor.copy");
+                        }
+                    }
+
+                    MenuItem {
+                        title: "Paste";
+                        activated => {
+                            root.command("editor.paste");
+                        }
+                    }
+
+                    MenuSeparator { }
+
+                    MenuItem {
+                        title: "Command Palette...";
+                        activated => {
+                            root.command("palette");
+                        }
+                    }
+                }
+
+                sv := ScrollView {
+                    visible: root.text-visible;
+                    content-width: max(self.visible-width, root.gutter-w + ti.preferred-width + 60px);
+                    content-height: max(self.visible-height, ti.preferred-height + self.visible-height - root.line-h);
+
+                    // current line highlight
+                    Rectangle {
+                        x: -sv.content-x + root.gutter-w;
+                        y: root.data.cursor-line * root.line-h;
+                        width: sv.visible-width - root.gutter-w;
+                        height: root.line-h;
+                        border-width: 2px;
+                        border-color: T.line-highlight;
+                        visible: ti.cursor-position-byte-offset == ti.anchor-position-byte-offset;
+                    }
+
+                    ti := TextInput {
+                        x: root.gutter-w;
+                        y: 0;
+                        width: max(sv.visible-width - root.gutter-w, self.preferred-width + 40px);
+                        height: max(sv.visible-height, self.preferred-height);
+                        single-line: false;
+                        wrap: no-wrap;
+                        read-only: root.data.read-only;
+                        enabled: root.text-visible;
+                        font-family: T.mono-font;
+                        font-size: root.editor-font-size;
+                        line-height-factor: 1.17;
+                        // with a grammar the text is drawn by the colored overlay below,
+                        // so the input only draws the selection background
+                        color: root.data.hl-active ? transparent : #cccccc;
+                        selection-background-color: T.selection;
+                        selection-foreground-color: root.data.hl-active ? transparent : #cccccc;
+                        text-cursor-width: 2px;
+                        page-height: sv.visible-height;
+                        edited => {
+                            root.editor-edited(self.text);
+                        }
+                        key-pressed(e) => {
+                            if root.editor-key(e.text, e.modifiers.control, e.modifiers.shift, e.modifiers.alt) {
+                                return EventResult.accept;
+                            }
+                            return EventResult.reject;
+                        }
+                        cursor-position-changed(p) => {
+                            // keep the cursor visible (TextInput does not scroll by itself)
+                            if p.y + sv.content-y < 0 {
+                                sv.content-y = -p.y;
+                            } else if p.y + root.line-h + sv.content-y > sv.visible-height {
+                                sv.content-y = min(0px, sv.visible-height - p.y - root.line-h);
+                            }
+                            if p.x + sv.content-x < 0 {
+                                sv.content-x = min(0px, -p.x + 20px);
+                            } else if p.x + sv.content-x > sv.visible-width - root.gutter-w - 30px {
+                                sv.content-x = min(0px, sv.visible-width - root.gutter-w - 30px - p.x);
+                            }
+                            root.caret-x = p.x;
+                            root.caret-y = p.y;
+                            root.caret-on = true;
+                            root.editor-cursor-moved(self.cursor-position-byte-offset, self.anchor-position-byte-offset);
+                        }
+                    }
+
+                    // colored text, only for the visible lines
+                    for l in root.data.hl-lines: HorizontalLayout {
+                        x: root.gutter-w;
+                        y: l.line * root.line-h;
+                        height: root.line-h;
+                        spacing: 0;
+                        alignment: start;
+                        for sp in l.spans: Text {
+                            text: sp.text;
+                            color: sp.color;
+                            font-family: T.mono-font;
+                            font-size: root.editor-font-size;
+                            line-height-factor: 1.17;
+                            vertical-alignment: top;
+                            wrap: no-wrap;
+                        }
+                    }
+
+                    // the input's own caret is invisible while its text color is transparent
+                    if root.data.hl-active && ti.has-focus && root.caret-on && ti.cursor-position-byte-offset == ti.anchor-position-byte-offset: Rectangle {
+                        x: root.gutter-w + root.caret-x;
+                        y: root.caret-y;
+                        width: 2px;
+                        height: root.line-h;
+                        background: #aeafad;
+                    }
+
+                    // gutter (line numbers), fixed horizontally, only visible lines are created
+                    Rectangle {
+                        x: -sv.content-x;
+                        y: -sv.content-y;
+                        width: root.gutter-w;
+                        height: sv.visible-height;
+                        background: T.bg-editor;
+                        clip: true;
+                        property <int> first: max(0, floor(-sv.content-y / root.line-h));
+                        property <int> rows: ceil(sv.visible-height / root.line-h) + 1;
+                        for i in self.rows: Text {
+                            property <int> ln: parent.first + i;
+                            x: 0;
+                            y: self.ln * root.line-h + sv.content-y;
+                            width: root.gutter-w - 26px;
+                            height: root.line-h;
+                            visible: self.ln < root.data.line-count;
+                            text: self.ln + 1;
+                            font-family: T.mono-font;
+                            font-size: root.editor-font-size;
+                            color: self.ln == root.data.cursor-line ? T.line-num-active : T.line-num;
+                            horizontal-alignment: right;
+                            vertical-alignment: center;
+                        }
+                        gta := TouchArea {
+                            pointer-event(e) => {
+                                if e.kind == PointerEventKind.down && e.button == PointerEventButton.left {
+                                    root.gutter-clicked(floor((self.mouse-y - sv.content-y) / root.line-h), e.modifiers.shift);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ---------- find / replace widget ----------
+            Rectangle {
+                visible: root.find-open && root.data.active && root.text-visible;
+                x: parent.width - self.width - 28px;
+                y: 0;
+                width: 440px;
+                height: root.replace-open ? 66px : 35px;
+                background: T.widget-bg;
+                border-radius: 0px;
+                drop-shadow-blur: 8px;
+                drop-shadow-color: T.shadow;
+                drop-shadow-offset-y: 2px;
+                Rectangle {
+                    x: 0;
+                    width: 3px;
+                    background: #454545;
+                }
+
+                ToolButton {
+                    x: 6px;
+                    y: 6px;
+                    width: 16px;
+                    height: root.replace-open ? 54px : 22px;
+                    icon: root.replace-open ? Icons.chevron-down : Icons.chevron-right;
+                    clicked => {
+                        root.find-toggle-replace();
+                    }
+                }
+
+                // find row
+                Rectangle {
+                    x: 26px;
+                    y: 5px;
+                    width: 250px;
+                    height: 24px;
+                    background: T.input-bg;
+                    border-width: 1px;
+                    border-color: find-input.has-focus ? T.focus-border : T.input-border;
+                    border-radius: 2px;
+                    find-input := TextInput {
+                        x: 6px;
+                        width: parent.width - 60px;
+                        height: parent.height;
+                        vertical-alignment: center;
+                        single-line: true;
+                        text <=> root.find-text;
+                        color: T.fg;
+                        selection-background-color: T.selection;
+                        edited => {
+                            root.find-edited(self.text);
+                        }
+                        key-pressed(e) => {
+                            if e.text == Key.Return {
+                                root.find-next(e.modifiers.shift);
+                                return EventResult.accept;
+                            }
+                            if e.text == Key.Escape {
+                                root.find-close();
+                                return EventResult.accept;
+                            }
+                            return EventResult.reject;
+                        }
+                    }
+
+                    if root.find-text == "": Text {
+                        x: 6px;
+                        text: "Find";
+                        color: T.fg-muted;
+                        vertical-alignment: center;
+                    }
+                    HorizontalLayout {
+                        x: parent.width - 52px;
+                        width: 50px;
+                        y: 2px;
+                        height: 20px;
+                        spacing: 2px;
+                        ToolButton {
+                            width: 20px;
+                            height: 20px;
+                            icon: "M3 17 L7 7 L11 17 M4.5 13.5 H9.5 M13 12 a3 3 0 1 0 6 0 a3 3 0 1 0 -6 0 Z M19 9 V17";
+                            toggled: root.find-case;
+                            clicked => {
+                                root.find-toggle("case");
+                            }
+                        }
+
+                        ToolButton {
+                            width: 20px;
+                            height: 20px;
+                            icon: "M3 18 H21 M3 15 V18 M21 15 V18 M5 12 a2.5 2.5 0 1 0 5 0 a2.5 2.5 0 1 0 -5 0 Z M13 7 V14.5 M13 12 a2.5 2.5 0 1 0 5 0 a2.5 2.5 0 1 0 -5 0 Z";
+                            toggled: root.find-word;
+                            clicked => {
+                                root.find-toggle("word");
+                            }
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    x: 282px;
+                    y: 6px;
+                    height: 22px;
+                    spacing: 2px;
+                    Text {
+                        width: 70px;
+                        text: root.find-info;
+                        color: root.find-info == "No results" ? T.error : T.fg;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                    }
+
+                    ToolButton {
+                        icon: Icons.arrow-up;
+                        clicked => {
+                            root.find-next(true);
+                        }
+                    }
+
+                    ToolButton {
+                        icon: Icons.arrow-down;
+                        clicked => {
+                            root.find-next(false);
+                        }
+                    }
+
+                    ToolButton {
+                        icon: Icons.close;
+                        clicked => {
+                            root.find-close();
+                        }
+                    }
+                }
+
+                // replace row
+                Rectangle {
+                    visible: root.replace-open;
+                    x: 26px;
+                    y: 36px;
+                    width: 250px;
+                    height: 24px;
+                    background: T.input-bg;
+                    border-width: 1px;
+                    border-color: replace-input.has-focus ? T.focus-border : T.input-border;
+                    border-radius: 2px;
+                    replace-input := TextInput {
+                        x: 6px;
+                        width: parent.width - 12px;
+                        height: parent.height;
+                        vertical-alignment: center;
+                        single-line: true;
+                        text <=> root.replace-text;
+                        color: T.fg;
+                        selection-background-color: T.selection;
+                        key-pressed(e) => {
+                            if e.text == Key.Return {
+                                if e.modifiers.control && e.modifiers.alt {
+                                    root.replace-all();
+                                } else {
+                                    root.replace-one();
+                                }
+                                return EventResult.accept;
+                            }
+                            if e.text == Key.Escape {
+                                root.find-close();
+                                return EventResult.accept;
+                            }
+                            return EventResult.reject;
+                        }
+                    }
+
+                    if root.replace-text == "": Text {
+                        x: 6px;
+                        text: "Replace";
+                        color: T.fg-muted;
+                        vertical-alignment: center;
+                    }
+                }
+                if root.replace-open: HorizontalLayout {
+                    x: 282px;
+                    y: 37px;
+                    height: 22px;
+                    spacing: 2px;
+                    alignment: start;
+                    ToolButton {
+                        icon: Icons.replace;
+                        clicked => {
+                            root.replace-one();
+                        }
+                    }
+
+                    ToolButton {
+                        icon: Icons.replace-all;
+                        clicked => {
+                            root.replace-all();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

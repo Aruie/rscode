@@ -88,38 +88,78 @@ pub(crate) fn wire(app: &App) {
 
     // ---- keys ----
     app.on_global_key(|t, c, s, a| with_state(|st| st.global_key(&t, c, s, a)).unwrap_or(false));
-    app.on_editor_key(|t, c, s, a| with_state(|st| st.editor_key(&t, c, s, a)).unwrap_or(false));
+    app.on_editor_key(|g, t, c, s, a| {
+        with_state(|st| {
+            st.use_group(g as usize);
+            st.editor_key(&t, c, s, a)
+        })
+        .unwrap_or(false)
+    });
     app.on_tree_key(|t, c, s, a| with_state(|st| st.tree_key(&t, c, s, a)).unwrap_or(false));
 
-    // ---- editor ----
-    app.on_editor_edited(|text| {
-        if with_state(|s| s.editor_edited(&text)).is_none() {
+    // ---- editor groups ----
+    app.on_group_activated(|g| {
+        with_state(|s| s.use_group(g as usize));
+    });
+    app.on_editor_edited(|g, text| {
+        let g = g as usize;
+        if with_state(|s| {
+            s.use_group(g);
+            s.editor_edited(&text)
+        })
+        .is_none()
+        {
             // re-entrant (an edit we triggered ourselves): sync right after
             slint::Timer::single_shot(std::time::Duration::ZERO, move || {
-                with_state(|s| s.editor_edited(&text));
+                with_state(|s| {
+                    s.use_group(g);
+                    s.editor_edited(&text)
+                });
             });
         }
     });
-    app.on_editor_cursor_moved(|c, a| {
-        with_state(|s| s.editor_cursor_moved(c.max(0) as usize, a.max(0) as usize));
+    app.on_editor_cursor_moved(|g, c, a| {
+        with_state(|s| {
+            if s.is_cur(g as usize) {
+                s.editor_cursor_moved(c.max(0) as usize, a.max(0) as usize)
+            }
+        });
     });
-    app.on_editor_viewport(|first, rows| {
-        with_state(|s| s.editor_viewport(first.max(0) as usize, rows.max(0) as usize));
+    app.on_editor_viewport(|g, first, rows| {
+        with_state(|s| s.editor_viewport(g as usize, first.max(0) as usize, rows.max(0) as usize));
     });
-    app.on_gutter_clicked(|line, shift| {
-        with_state(|s| s.gutter_clicked(line, shift));
+    app.on_gutter_clicked(|g, line, shift| {
+        with_state(|s| {
+            s.use_group(g as usize);
+            s.gutter_clicked(line, shift)
+        });
     });
     app.on_command(|id| {
         with_state(|s| s.run_command(&id));
     });
-
-    // ---- tabs ----
-    app.on_tab_clicked(|i| {
-        with_state(|s| s.tab_clicked(i as usize));
+    app.on_tab_clicked(|g, i| {
+        with_state(|s| s.tab_clicked(g as usize, i as usize));
     });
-    app.on_tab_close(|i| {
-        with_state(|s| s.request_close_tab(i as usize));
+    app.on_tab_close(|g, i| {
+        with_state(|s| s.tab_close_clicked(g as usize, i as usize));
     });
+    app.on_panel_link(|g, u| {
+        with_state(|s| s.panel_link(g as usize, &u));
+    });
+    app.on_panel_button(|g, t| {
+        with_state(|s| s.panel_button(g as usize, &t));
+    });
+    app.on_title_button_clicked(|g| {
+        with_state(|s| s.title_button_clicked(g as usize));
+    });
+    {
+        let w = w.clone();
+        app.on_start_resize(move |d| {
+            if let Some(a) = w.upgrade() {
+                start_resize(&a, d);
+            }
+        });
+    }
 
     // ---- side bar ----
     app.on_activity(|v| {
@@ -210,18 +250,6 @@ pub(crate) fn wire(app: &App) {
     app.on_ext_toggle(|i| {
         with_state(|s| s.ext_toggle(i as usize));
     });
-    app.on_panel_close(|| {
-        with_state(|s| s.panel_close());
-    });
-    app.on_panel_link(|u| {
-        with_state(|s| s.panel_link(&u));
-    });
-    app.on_panel_button(|t| {
-        with_state(|s| s.panel_button(&t));
-    });
-    app.on_title_button_clicked(|| {
-        with_state(|s| s.title_button_clicked());
-    });
 
     // ---- CPU / memory meter ----
     {
@@ -246,5 +274,23 @@ pub(crate) fn wire(app: &App) {
     });
     app.on_toast_close(|i| {
         with_state(|s| s.toast_close(i as usize));
+    });
+}
+
+/// Start an OS-driven resize of the frameless window from one of its edges.
+fn start_resize(app: &App, dir: i32) {
+    use slint::winit_030::{winit::window::ResizeDirection as R, WinitWindowAccessor};
+    let d = match dir {
+        0 => R::North,
+        1 => R::NorthEast,
+        2 => R::East,
+        3 => R::SouthEast,
+        4 => R::South,
+        5 => R::SouthWest,
+        6 => R::West,
+        _ => R::NorthWest,
+    };
+    app.window().with_winit_window(|w| {
+        let _ = w.drag_resize_window(d);
     });
 }

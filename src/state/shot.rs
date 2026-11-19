@@ -20,7 +20,6 @@ impl State {
             self.open_local_folder_now(root.clone());
             self.open_local(&root.join("ROADMAP.md"));
             self.ext_key(true, "v", false, false, false);
-            self.panel_render_now();
             return;
         }
         if scene == "remote" {
@@ -63,7 +62,7 @@ impl State {
                 // selection background comes from the input, glyphs from the overlay: they must line up
                 let a = t.find("impl Sel").unwrap_or(0);
                 let b = t[a..].find("pub fn start").map(|x| a + x + 12).unwrap_or(a);
-                self.ui().invoke_focus_editor();
+                self.focus_ed();
                 self.set_sel(Sel::new(a + 5, b));
                 self.center_line(10);
             }
