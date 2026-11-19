@@ -24,6 +24,8 @@ The binary is `target\release\rcode.exe`.
 
 - Syntax highlighting with tree-sitter. Grammars are loaded at runtime from a `grammars/` folder next to the executable (or `$RCODE_GRAMMARS`), one subfolder per language with `parser.dll` (`.so` on Linux), `highlights.scm` and `config.txt`. Adding a language needs no rebuild of the editor. Build the folder with `python3 tools/build_grammars.py --target windows --out <dir>/grammars` (needs `zig`).
 
+- Extensions: dynamic libraries in an `extensions/` folder next to the executable (or `$RCODE_EXTENSIONS`), turned on and off in the Extensions view (Ctrl+Shift+X). Only enabled ones are loaded. Extensions never draw: they return lists of prebuilt widgets (`sdk/`, crate `rcode-ext`). Bundled: Markdown Preview (Ctrl+K V).
+
 Not yet: multiple cursors, terminal, search across files, git, ssh-agent, ProxyJump.
 
 ## Development

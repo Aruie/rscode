@@ -28,3 +28,5 @@ Until the agent exists: read files over an exec channel (`cat`) in one round tri
 - Remote-SSH over SFTP with ~/.ssh/config hosts
 - Hangul IME shortcut mapping
 - tree-sitter highlighting with runtime-loaded grammars
+- Search view (Ctrl+Shift+F), title bar CPU/memory meter
+- Extension host + Extensions view, Markdown Preview extension
